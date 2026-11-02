@@ -1,22 +1,91 @@
 #requires -Version 5.1
 #requires -RunAsAdministrator
-
 <#
  ALBIS SYSTEMCHECK - WINDOWS 11
  Version: 1.1
  PowerShell: 5.1 oder neuer
  Ausfuehrung: Administrator
 #>
-
+$taskNames = @(
+    "Systemwiederherstellung"
+    "Registry-Sicherung"
+    "SMB-Konfiguration"
+    "TCP-Konfiguration"
+    "Windows-Version"
+    "Arbeitsspeicher"
+    "Freier Speicherplatz"
+    "LOCAL.INI-Pruefung"
+    "ALBISGLB.INI-Pruefung (P-Laufwerk)"
+    "ALBISGLB.INI-Servername-Pruefung"
+    "HOSTS-Datei"
+    "Netzlaufwerke"
+    "DNS-Cache"
+    "Zeitsynchronisation"
+    "Windows Defender Ausnahmen"
+    "Benutzerkontensteuerung"
+    "Windows-Oberflaeche"
+    "Dienst Verteilte Verknuepfungen"
+    "Energieverwaltung"
+    "Kontrolle Energieverwaltung"
+    "Remotedesktop"
+    "Enable Linked Connections"
+    "CGM-Berechtigungen"
+    "MTU-Netzwerk"
+    "Netzwerkprofil"
+    "Windows Defender Firewall"
+    "Firewall-Dienst"
+    "Windows Smart App Control"
+    "Windows Speicheroptimierung"
+    "Temp-Ordner"
+    "Permanente IPv4-Routen"
+    "Ereignisanzeige (Speicher/Treiber)"
+)
+Write-Host "ALBIS SYSTEMCHECK - TAETIGKEITEN" -ForegroundColor Cyan
+for ($i = 0; $i -lt $taskNames.Count; $i++) {
+    Write-Host ("{0,2}. {1}" -f ($i + 1), $taskNames[$i])
+}
+Write-Host " 0. Alle Taetigkeiten ausfuehren"
+do {
+    $selection = Read-Host "Auswahl (z. B. 1,3,5; 0 = alles)"
+    $selectedTasks = @()
+    $validSelection = $true
+    foreach ($value in ($selection -split '\s*,\s*')) {
+        if ($value -notmatch '^\d+$') {
+            $validSelection = $false
+            break
+        }
+        $number = 0
+        if (-not [int]::TryParse($value, [ref]$number)) {
+            $validSelection = $false
+            break
+        }
+        if ($number -lt 0 -or $number -gt $taskNames.Count) {
+            $validSelection = $false
+            break
+        }
+        $selectedTasks += $number
+    }
+    if ($validSelection -and $selectedTasks.Count -eq 1 -and $selectedTasks[0] -eq 0) {
+        $script:SelectedTasks = @(1..$taskNames.Count)
+        break
+    }
+    if ($validSelection -and $selectedTasks.Count -gt 0 -and $selectedTasks -notcontains 0) {
+        $script:SelectedTasks = @($selectedTasks | Select-Object -Unique)
+        break
+    }
+    Write-Host "Ungueltige Auswahl. Bitte Taetigkeiten aus der Liste oder 0 eingeben." -ForegroundColor Yellow
+} while ($true)
+function Test-TaskSelected {
+    param([int]$TaskNumber)
+    return $script:SelectedTasks -contains $TaskNumber
+}
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
-
 # ============================================================
 # KONFIGURATION
 # ============================================================
 # Protokollverzeichnis
 $LogFolder = "C:\cgm"
-
 # Ordner automatisch erstellen
 if (!(Test-Path -LiteralPath $LogFolder)) {
     New-Item -Path $LogFolder -ItemType Directory -Force |
@@ -31,11 +100,8 @@ $script:Success  = 0
 $script:Warnings = 0
 $script:Errors   = 0
 $script:Changes  = 0
-
 $script:LogFile | Out-Null
-
 $startDate = Get-Date
-
 # ============================================================
 # PROTOKOLLIERUNG
 # ============================================================
@@ -76,11 +142,8 @@ function Write-Status {
 }
 function Write-Section {
     param([string]$Title)
-
     $line = "`r`n========== $Title =========="
-
     Write-Host $line -ForegroundColor Cyan
-
     Add-Content -Path $script:LogFile `
         -Value $line -Encoding UTF8
 }
@@ -89,13 +152,10 @@ function Confirm-Critical {
     Write-Host ""
     Write-Host "KRITISCHE SYSTEMAENDERUNG" -ForegroundColor Red
     Write-Host $Message -ForegroundColor Yellow
-
     $answer = Read-Host "Aenderung ausfuehren? (J/N)"
-
     return ($answer -match "^(J|JA)$")
 }
 function Invoke-Critical {
-
     param(
         [string]$Description,
         [scriptblock]$Action
@@ -113,7 +173,6 @@ function Invoke-Critical {
         }
     }
     else {
-
         Write-Status "$Description - abgelehnt" "WARN"
     }
 }
@@ -134,25 +193,59 @@ function Set-RegistryValue {
         -PropertyType $Type `
         -Force | Out-Null
 }
-
+function Test-IniEncoding {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    # Read the raw bytes so the original encoding remains untouched.
+    # Use byte values instead of umlauts in the script text.
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (mit BOM) statt ANSI kodiert ($Path)" }
+    }
+    if ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) {
+        return @{ Status = "WARN"; Text = "$Name ist UTF-16 statt ANSI kodiert ($Path)" }
+    }
+    # Pure ASCII contains no umlauts.
+    $hasHighBytes = $false
+    foreach ($b in $bytes) { if ($b -ge 0x80) { $hasHighBytes = $true; break } }
+    if (-not $hasHighBytes) {
+        return @{ Status = "WARN"; Text = "$Name enthaelt KEINE deutschen Umlaute ($Path)" }
+    }
+    # Strict decoding throws when the byte sequence is not valid UTF-8.
+    $isUtf8 = $true
+    try {
+        $strict = New-Object System.Text.UTF8Encoding($false, $true)
+        $null = $strict.GetString($bytes)
+    }
+    catch { $isUtf8 = $false }
+    if ($isUtf8) {
+        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (ohne BOM) statt ANSI kodiert ($Path)" }
+    }
+    # Check Windows-1252 bytes for German umlauts.
+    $umlautBytes = [byte[]](0xE4, 0xF6, 0xFC, 0xC4, 0xD6, 0xDC, 0xDF)
+    foreach ($b in $bytes) {
+        if ($umlautBytes -contains $b) {
+            return @{ Status = "OK"; Text = "$Name ist ANSI kodiert und enthaelt deutsche Umlaute ($Path)" }
+        }
+    }
+    return @{ Status = "WARN"; Text = "$Name ist ANSI kodiert, enthaelt aber KEINE deutschen Umlaute ($Path)" }
+}
 # ============================================================
 # STARTINFORMATIONEN
 # ============================================================
-
 Write-Section "ALBIS SYSTEMCHECK - START"
-
 Write-Status "Computername: $env:COMPUTERNAME"
 Write-Status "Benutzer: $env:USERNAME"
 Write-Status "PowerShell-Version: $($PSVersionTable.PSVersion)"
 Write-Status "Startzeit: $(Get-Date)"
 Write-Status "Protokoll: $script:LogFile"
 #-------------------------------------------------------------
-
 # ============================================================
 # SYSTEMWIEDERHERSTELLUNG auf 9% und einen WP erstellen
-
+if (Test-TaskSelected 1) {
 Write-Section "SYSTEMWIEDERHERSTELLUNG"
-
 # Systemwiederherstellung fuer C: aktivieren
 try {
     Enable-ComputerRestore -Drive "C:\" -ErrorAction Stop
@@ -161,104 +254,84 @@ try {
 catch {
     Write-Status "Systemschutz konnte nicht aktiviert werden: $_" "ERROR"
 }
-
 # Schattenkopiespeicher direkt auf 9% einstellen
 Invoke-Critical "Schattenkopiespeicher fuer C: auf 9% einstellen" {
     & vssadmin.exe Resize ShadowStorage `
         /For=C: `
         /On=C: `
         /MaxSize=9%
-        
     if ($LASTEXITCODE -ne 0) {
         throw "Schattenkopiespeicher konnte nicht auf 9% eingestellt werden."
     }
     Write-Status "Schattenkopiespeicher erfolgreich auf 9% gesetzt" "OK"
 }
-
 # Wiederherstellungspunkt mit Name AOW erstellen
 Invoke-Critical "Wiederherstellungspunkt AOW erstellen" {
     Checkpoint-Computer `
         -Description "AOW" `
         -RestorePointType MODIFY_SETTINGS `
         -ErrorAction Stop
-
     Write-Status "Wiederherstellungspunkt AOW wurde erstellt" "OK"
 }
-
 # ============================================================
 # REGISTRY-SICHERUNG HKEY_CURRENT_USER\SOFTWARE
-
+}
+if (Test-TaskSelected 2) {
 Write-Section "REGISTRY-SICHERUNG"
-
 try {
     # Sicherungsverzeichnis
     $BackupFolder = "C:\CGM"
-
     if (!(Test-Path -LiteralPath $BackupFolder)) {
-
         New-Item `
             -Path $BackupFolder `
             -ItemType Directory `
             -Force |
             Out-Null
     }
-
     # Datum und Uhrzeit fuer Dateinamen
     $Timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-
     # Dateiname
     $BackupFile = Join-Path `
         $BackupFolder `
         "Registry_HKCU_Software_$Timestamp.reg"
-
     # Registry exportieren
     $ExportResult = & reg.exe export `
         "HKCU\Software" `
         $BackupFile `
         /y 2>&1
     if ($LASTEXITCODE -ne 0) {
-
         throw "Registry-Export fehlgeschlagen: $ExportResult"
     }
-
     # Pruefen, ob Sicherungsdatei existiert
     if (
         !(Test-Path -LiteralPath $BackupFile) -or
         (Get-Item -LiteralPath $BackupFile).Length -eq 0
     ) {
-
         throw "Sicherungsdatei wurde nicht korrekt erstellt"
     }
-
     $BackupSize = [math]::Round(
         (Get-Item -LiteralPath $BackupFile).Length / 1KB,
         2
     )
-
     Write-Status "Registry-Sicherung erfolgreich erstellt" "OK"
     Write-Status "Datei: $BackupFile" "OK"
     Write-Status "DateigroeÃŸe: $BackupSize KB" "INFO"
-
     $script:Changes++
 }
 catch {
-
     Write-Status (
         "Registry-Sicherung fehlgeschlagen: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # SMB KONFIGURATION sichern
 # ============================================================
-
+}
+if (Test-TaskSelected 3) {
 Write-Section "SMB KONFIGURATION"
-
 Write-Status "SMB-Serverkonfiguration" "INFO"
-
 try {
     $smbServer = Get-SmbServerConfiguration -ErrorAction Stop
-
     $serverProperties = @(
         "EnableSMB1Protocol",
         "EnableSMB2Protocol",
@@ -277,11 +350,8 @@ try {
         "Smb2CreditsMin"
     )
     foreach ($property in $serverProperties) {
-
         $value = $smbServer.$property
-
         if ($null -ne $value) {
-
             Write-Status (
                 "SMB Server | $property = $value"
             ) "INFO"
@@ -289,17 +359,13 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "SMB-Serverkonfiguration nicht lesbar: $_"
     ) "WARN"
 }
-
 Write-Status "SMB-Clientkonfiguration" "INFO"
-
 try {
     $smbClient = Get-SmbClientConfiguration -ErrorAction Stop
-
     $clientProperties = @(
         "EnableSecuritySignature",
         "RequireSecuritySignature",
@@ -316,11 +382,8 @@ try {
         "ConnectionCountPerRssNetworkInterface"
     )
     foreach ($property in $clientProperties) {
-
         $value = $smbClient.$property
-
         if ($null -ne $value) {
-
             Write-Status (
                 "SMB Client | $property = $value"
             ) "INFO"
@@ -332,21 +395,15 @@ catch {
         "SMB-Clientkonfiguration nicht lesbar: $_"
     ) "WARN"
 }
-
 # ------------------------------------------------------------
 # SMB AKTIVE VERBINDUNGEN
-
 Write-Status "Aktive SMB-Verbindungen" "INFO"
-
 try {
     $smbConnections = @(
         Get-SmbConnection -ErrorAction Stop
     )
-
     if ($smbConnections.Count -gt 0) {
-
         foreach ($connection in $smbConnections) {
-
             Write-Status (
                 "SMB Verbindung | Server: $($connection.ServerName) | " +
                 "Freigabe: $($connection.ShareName) | " +
@@ -358,24 +415,19 @@ try {
         }
     }
     else {
-
         Write-Status (
             "Keine aktiven SMB-Verbindungen gefunden"
         ) "INFO"
     }
 }
 catch {
-
     Write-Status (
         "SMB-Verbindungen konnten nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # ------------------------------------------------------------
 # SMB SERVER FREIGABEN
-
 Write-Status "SMB-Freigaben" "INFO"
-
 try {
     $smbShares = @(
         Get-SmbShare -ErrorAction Stop |
@@ -384,9 +436,7 @@ try {
         }
     )
     if ($smbShares.Count -gt 0) {
-
         foreach ($share in $smbShares) {
-
             Write-Status (
                 "Freigabe: $($share.Name) | " +
                 "Pfad: $($share.Path) | " +
@@ -395,32 +445,25 @@ try {
         }
     }
     else {
-
         Write-Status (
             "Keine benutzerdefinierten SMB-Freigaben vorhanden"
         ) "INFO"
     }
 }
 catch {
-
     Write-Status (
         "SMB-Freigaben konnten nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # ------------------------------------------------------------
 # SMB MULTICHANNEL
-
 Write-Status "SMB Multichannel" "INFO"
-
 try {
     $multiChannel = @(
         Get-SmbMultichannelConnection -ErrorAction Stop
     )
     if ($multiChannel.Count -gt 0) {
-
         foreach ($channel in $multiChannel) {
-
             Write-Status (
                 "Multichannel | Server: $($channel.ServerName) | " +
                 "Client-IP: $($channel.ClientIpAddress) | " +
@@ -431,7 +474,6 @@ try {
         }
     }
     else {
-
         Write-Status (
             "Keine aktiven SMB-Multichannel-Verbindungen"
         ) "INFO"
@@ -442,23 +484,16 @@ catch {
         "SMB-Multichannel-Status nicht verfuegbar: $_"
     ) "WARN"
 }
-
 # ============================================================
 # TCP KONFIGURATION sichern
-
+}
+if (Test-TaskSelected 4) {
 Write-Section "TCP KONFIGURATION"
-
-
 # TCP GLOBALE EINSTELLUNGEN
-
-
 Write-Status "Globale TCP-Konfiguration" "INFO"
-
 try {
     $tcpGlobal = & netsh.exe int tcp show global 2>&1
-
     foreach ($line in $tcpGlobal) {
-
         Write-Status (
             "TCP Global | $line"
         ) "INFO"
@@ -469,14 +504,10 @@ catch {
         "Globale TCP-Einstellungen nicht lesbar: $_"
     ) "WARN"
 }
-
 # TCP HEURISTIKEN
-
 Write-Status "TCP Heuristiken" "INFO"
-
 try {
     $tcpHeuristics = & netsh.exe int tcp show heuristics 2>&1
-
     foreach ($line in $tcpHeuristics) {
         Write-Status (
             "TCP Heuristics | $line"
@@ -484,23 +515,17 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "TCP-Heuristiken nicht lesbar: $_"
     ) "WARN"
 }
-
 # TCP SETTINGS PROFILE
-
 Write-Status "TCP-Einstellungsprofile" "INFO"
-
 try {
     $tcpSettings = @(
         Get-NetTCPSetting -ErrorAction Stop
     )
-
     foreach ($setting in $tcpSettings) {
-
         Write-Status (
             "TCP Profil | $($setting.SettingName) | " +
             "Congestion: $($setting.CongestionProvider) | " +
@@ -513,27 +538,20 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "TCP-Einstellungsprofile nicht lesbar: $_"
     ) "WARN"
 }
-
 # AKTIVE TCP VERBINDUNGEN
-
 Write-Status "Aktive TCP-Verbindungen" "INFO"
-
 try {
     $tcpConnections = @(
         Get-NetTCPConnection -ErrorAction Stop
     )
     if ($tcpConnections.Count -gt 0) {
-
         $tcpStates = $tcpConnections |
             Group-Object -Property State
-
         foreach ($state in $tcpStates) {
-
             Write-Status (
                 "TCP Status | $($state.Name): " +
                 "$($state.Count) Verbindungen"
@@ -554,11 +572,8 @@ catch {
         "TCP-Verbindungen konnten nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # TCP NETZWERKADAPTER
-
 Write-Status "TCP Netzwerkadapter" "INFO"
-
 try {
     $tcpInterfaces = @(
         Get-NetIPInterface -ErrorAction Stop |
@@ -567,7 +582,6 @@ try {
         }
     )
     foreach ($interface in $tcpInterfaces) {
-
         Write-Status (
             "Adapter: $($interface.InterfaceAlias) | " +
             "Familie: $($interface.AddressFamily) | " +
@@ -580,22 +594,17 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "TCP-Netzwerkadapter konnten nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # TCP RSS / RECEIVE SIDE SCALING
-
 Write-Status "TCP Receive Side Scaling (RSS)" "INFO"
-
 try {
     $rssAdapters = @(
         Get-NetAdapterRss -ErrorAction Stop
     )
     foreach ($rss in $rssAdapters) {
-
         Write-Status (
             "RSS | Adapter: $($rss.Name) | " +
             "Enabled: $($rss.Enabled) | " +
@@ -605,23 +614,17 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "RSS-Einstellungen konnten nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # TCP OFFLOAD EINSTELLUNGEN
-
 Write-Status "TCP Offload Einstellungen" "INFO"
-
 try {
     $offloadAdapters = @(
         Get-NetAdapterLso -ErrorAction Stop
     )
-
     foreach ($offload in $offloadAdapters) {
-
         Write-Status (
             "LSO | Adapter: $($offload.Name) | " +
             "IPv4: $($offload.IPv4Enabled) | " +
@@ -630,22 +633,17 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "LSO-Einstellungen konnten nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # TCP CHECKSUM OFFLOAD
-
 Write-Status "TCP Checksum Offload" "INFO"
-
 try {
     $checksumAdapters = @(
         Get-NetAdapterChecksumOffload -ErrorAction Stop
     )
     foreach ($checksum in $checksumAdapters) {
-
         Write-Status (
             "Checksum | Adapter: $($checksum.Name) | " +
             "IPv4 TCP: $($checksum.TcpIPv4) | " +
@@ -656,35 +654,28 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "Checksum-Offload-Einstellungen nicht lesbar: $_"
     ) "WARN"
 }
-
 Write-Status (
     "SMB- und TCP-Bestandsaufnahme abgeschlossen"
 ) "OK"
-
 # ============================================================
 # WINDOWS VERSION PRUEFEN
-
+}
+if (Test-TaskSelected 5) {
 Write-Section "WINDOWS VERSION"
-
 $os = Get-CimInstance Win32_OperatingSystem
-
 $reg = Get-ItemProperty `
     "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
-
 $displayVersion = $reg.DisplayVersion
 $build = [int]$reg.CurrentBuildNumber
 $ubr = [int]$reg.UBR
-
 Write-Status "Windows: $($os.Caption)"
 Write-Status "Version: $displayVersion"
 Write-Status "Build: $build.$ubr"
 Write-Status "Installationsdatum: $($os.InstallDate)"
-
 if (
     $os.Caption -match "Windows 11" -and
     $displayVersion -eq "25H2" -and
@@ -698,34 +689,27 @@ else {
         "Installierte Version: $displayVersion, Build $build"
     ) "ERROR"
 }
-
 # ============================================================
 # ARBEITSSPEICHER MIN 16 GB und Auslastung MAX 75%
 # ============================================================
-
+}
+if (Test-TaskSelected 6) {
 Write-Section "ARBEITSSPEICHER"
-
 $memory = Get-CimInstance Win32_OperatingSystem
-
 $totalRAM = [math]::Round(
     $memory.TotalVisibleMemorySize / 1MB, 2
 )
-
 $freeRAM = [math]::Round(
     $memory.FreePhysicalMemory / 1MB, 2
 )
-
 $freePercent = [math]::Round(
     ($memory.FreePhysicalMemory /
     $memory.TotalVisibleMemorySize) * 100, 1
 )
-
 Write-Status "Gesamter RAM: $totalRAM GB"
 Write-Status "Freier RAM: $freeRAM GB"
 Write-Status "Frei: $freePercent %"
-
 if ($totalRAM -ge 16 -and $freePercent -ge 35) {
-
     Write-Status "RAM-Anforderungen erfuellt" "OK"
 }
 else {
@@ -734,13 +718,12 @@ else {
         "Mindestens 16 GB und 35% frei erforderlich."
     ) "ERROR"
 }
-
 # ============================================================
 # FREIER SPEICHERPLATZ MIND 10 GB
 # ============================================================
-
+}
+if (Test-TaskSelected 7) {
 Write-Section "FREIER SPEICHERPLATZ"
-
 $disks = @(
     Get-CimInstance Win32_LogicalDisk |
     Where-Object {
@@ -768,80 +751,24 @@ foreach ($disk in $disks) {
         ) "ERROR"
     }
 }
-
-# ============================================================
-# HILFSFUNKTION: INI-KODIERUNG PRUEFEN (ANSI mit Umlauten?)
-# Liest die Rohbytes, damit die Originalkodierung erhalten bleibt.
-# Verwendet bewusst keine Umlaute im Skripttext (Byte-Werte statt Zeichen).
-# ============================================================
-function Test-IniEncoding {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Name
-    )
-
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-
-    # 1) UTF-8 BOM (EF BB BF) bzw. UTF-16 BOM
-    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
-        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (mit BOM) statt ANSI kodiert ($Path)" }
-    }
-    if ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) {
-        return @{ Status = "WARN"; Text = "$Name ist UTF-16 statt ANSI kodiert ($Path)" }
-    }
-
-    # 2) Reines ASCII? Dann keine Umlaute vorhanden
-    $hasHighBytes = $false
-    foreach ($b in $bytes) { if ($b -ge 0x80) { $hasHighBytes = $true; break } }
-    if (-not $hasHighBytes) {
-        return @{ Status = "WARN"; Text = "$Name enthaelt KEINE deutschen Umlaute ($Path)" }
-    }
-
-    # 3) Gueltiges UTF-8 ohne BOM? (strikter Decoder wirft bei ungueltigen Bytes)
-    $isUtf8 = $true
-    try {
-        $strict = New-Object System.Text.UTF8Encoding($false, $true)
-        $null = $strict.GetString($bytes)
-    }
-    catch { $isUtf8 = $false }
-
-    if ($isUtf8) {
-        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (ohne BOM) statt ANSI kodiert ($Path)" }
-    }
-
-    # 4) ANSI (Windows-1252): Umlaut-Bytes suchen
-    #    E4=ae F6=oe FC=ue C4=Ae D6=Oe DC=Ue DF=ss
-    $umlautBytes = [byte[]](0xE4, 0xF6, 0xFC, 0xC4, 0xD6, 0xDC, 0xDF)
-    foreach ($b in $bytes) {
-        if ($umlautBytes -contains $b) {
-            return @{ Status = "OK"; Text = "$Name ist ANSI kodiert und enthaelt deutsche Umlaute ($Path)" }
-        }
-    }
-
-    return @{ Status = "WARN"; Text = "$Name ist ANSI kodiert, enthaelt aber KEINE deutschen Umlaute ($Path)" }
-}
-
 # ============================================================
 # LOCAL.INI PRUEFEN (Pfadsuche & Umlaut-Check)
 # ============================================================
-
+}
+if (Test-TaskSelected 8) {
 Write-Section "LOCAL.INI PRUEFUNG"
-
 $localIniPaths = @(
     "C:\albiswin\local.ini",
     "C:\cgm\albiswin\local.ini",
     "P:\local.ini",
     "P:\albiswin\local.ini"
 )
-
 foreach ($iniPath in $localIniPaths) {
     if (Test-Path -LiteralPath $iniPath) {
         Write-Status "local.ini gefunden unter: $iniPath" "OK"
-        
         try {
             $result = Test-IniEncoding -Path $iniPath -Name "local.ini"
             Write-Status $result.Text $result.Status
-
             if ($result.Status -ne "OK") {
                 # Warnung anzeigen und auf Tastendruck warten
                 Write-Host ""
@@ -858,26 +785,22 @@ foreach ($iniPath in $localIniPaths) {
         Write-Status "local.ini nicht vorhanden unter: $iniPath" "INFO"
     }
 }
-
 # ============================================================
 # ALBISGLB.INI PRUEFEN (P:\ und P:\albiswin)
 # ============================================================
-
+}
+if (Test-TaskSelected 9) {
 Write-Section "ALBISGLB.INI PRUEFUNG (P-LAUFWERK)"
-
 $albisGlbPaths = @(
     "P:\albisglb.ini",
     "P:\albiswin\albisglb.ini"
 )
-
 foreach ($iniPath in $albisGlbPaths) {
     if (Test-Path -LiteralPath $iniPath) {
         Write-Status "albisglb.ini gefunden unter: $iniPath" "OK"
-        
         try {
             $result = Test-IniEncoding -Path $iniPath -Name "albisglb.ini"
             Write-Status $result.Text $result.Status
-
             if ($result.Status -ne "OK") {
                 # Warnung anzeigen und auf Tastendruck warten
                 Write-Host ""
@@ -892,7 +815,6 @@ foreach ($iniPath in $albisGlbPaths) {
     }
     else {
         Write-Status "Warnung: albisglb.ini nicht vorhanden unter: $iniPath" "WARN"
-        
         # Warnung anzeigen und auf Tastendruck warten, falls Datei fehlt
         Write-Host ""
         Write-Host "Achtung: Die Datei '$iniPath' existiert nicht. Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Yellow
@@ -900,41 +822,33 @@ foreach ($iniPath in $albisGlbPaths) {
         Write-Host ""
     }
 }
-
 # ============================================================
 # ALBISGLB.INI - SERVERNAME PRUEFEN (Hostname vs. IP)
 # ============================================================
-
+}
+if (Test-TaskSelected 10) {
 Write-Section "ALBISGLB.INI SERVERNAME PRUEFUNG"
-
 # Liste mÃ¶glicher Pfade fÃ¼r die albisglb.ini
 $glbIniSearchPaths = @(
     "P:\albiswin\albisglb.ini"
 )
-
 $glbFoundCount = 0
-
 foreach ($iniPath in $glbIniSearchPaths) {
     if (Test-Path -LiteralPath $iniPath) {
         $glbFoundCount++
         Write-Status "Pruefe Datei: $iniPath" "INFO"
-
         try {
             $content = Get-Content -LiteralPath $iniPath -ErrorAction Stop
             # Zeile finden, die mit ServerName= beginnt (ignoriert GroÃŸ-/Kleinschreibung und Leerzeichen)
             $serverLine = $content | Where-Object { $_ -match '^\s*ServerName\s*=\s*(.+)' }
-
             if ($serverLine) {
                 # Wert nach dem '=' extrahieren und bereinigen (evt. Inline-Kommentare abtrennen)
                 $match = [regex]::Match($serverLine, '^\s*ServerName\s*=\s*([^;#]+)')
-                
                 if ($match.Success) {
                     $serverValue = $match.Groups[1].Value.Trim()
-
                     # PrÃ¼fen, ob der Wert eine gÃ¼ltige IP-Adresse ist
                     $ipDummy = $null
                     $isIpAddress = [System.Net.IPAddress]::TryParse($serverValue, [ref]$ipDummy)
-
                     if ($isIpAddress) {
                         Write-Status "Warnung: ServerName in '$iniPath' ist eine IP-Adresse ('$serverValue'). Empfohlen wird die Verwendung des Hostnamens!" "WARN"
                     }
@@ -955,20 +869,16 @@ foreach ($iniPath in $glbIniSearchPaths) {
         }
     }
 }
-
 if ($glbFoundCount -eq 0) {
     Write-Status "Es wurde keine 'albisglb.ini' in den Standardpfaden gefunden." "WARN"
 }
-
 # ============================================================
 # HOSTS DATEI
-
+}
+if (Test-TaskSelected 11) {
 Write-Section "HOSTS DATEI"
-
 $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
-
 if (Test-Path $hostsFile) {
-
     $hostsEntries = @(
         Get-Content -LiteralPath $hostsFile |
         Where-Object {
@@ -984,7 +894,6 @@ if (Test-Path $hostsFile) {
         }
     )
     if ($customHosts.Count -gt 0) {
-
         Write-Status (
             "$($customHosts.Count) zusaetzliche Hosts-Eintraege gefunden"
         ) "INFO"
@@ -997,11 +906,9 @@ if (Test-Path $hostsFile) {
                     $parts[0], [ref]$ip
                 )
             ) {
-
                 Write-Status "Hosts-Eintrag: $entry" "OK"
             }
             else {
-
                 Write-Status (
                     "Ungueltiger Hosts-Eintrag: $entry"
                 ) "ERROR"
@@ -1022,40 +929,32 @@ Write-Host ""
 Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host ""
-
 # ============================================================
 # NETZLAUFWERKE ueber HOSTNAME ODER IP
-
+}
+if (Test-TaskSelected 12) {
 Write-Section "NETZLAUFWERKE"
-
 $networkDrives = @(
     Get-CimInstance Win32_LogicalDisk `
         -Filter "DriveType=4"
 )
-
 if ($networkDrives.Count -gt 0) {
-
     foreach ($drive in $networkDrives) {
-
         $remote = $drive.ProviderName
-
         if (
             $remote -match
             "^\\\\(\d{1,3}\.){3}\d{1,3}\\"
         ) {
-
             Write-Status (
                 "$($drive.DeviceID) ueber IP-Adresse: $remote"
             ) "WARN"
         }
         elseif ($remote -match "^\\\\") {
-
             Write-Status (
                 "$($drive.DeviceID) ueber Hostname: $remote"
             ) "OK"
         }
         else {
-
             Write-Status (
                 "$($drive.DeviceID): $remote"
             ) "WARN"
@@ -1063,7 +962,6 @@ if ($networkDrives.Count -gt 0) {
     }
 }
 else {
-
     Write-Status "Keine Netzlaufwerke gefunden" "INFO"
 }
 # Pause und auf beliebige Taste warten
@@ -1071,49 +969,38 @@ Write-Host ""
 Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host ""
-
 # ============================================================
 # DNS CACHE LEEREN
-
+}
+if (Test-TaskSelected 13) {
 Write-Section "DNS CACHE"
-
 try {
     $dnsResult = & ipconfig.exe /flushdns 2>&1
-
     foreach ($line in $dnsResult) {
         Write-Status "$line" "INFO"
     }
-
     if ($LASTEXITCODE -ne 0) {
         throw "DNS-Cache konnte nicht geleert werden"
     }
-
     Write-Status (
         "DNS-Aufloesungscache erfolgreich geleert"
     ) "OK"
-
     $script:Changes++
-
 }
 catch {
-
     Write-Status (
         "DNS-Cache konnte nicht geleert werden: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # DATUM UND UHRZEIT / NTP Sync
-
+}
+if (Test-TaskSelected 14) {
 $NtpServer = "ptbtime1.ptb.de"
-
 Write-Section "ZEITSYNCHRONISATION"
-
 try {
     Write-Status "NTP-Server: $NtpServer" "INFO"
-
     # Zeitserver konfigurieren
-
     & w32tm.exe /config `
         /manualpeerlist:"$NtpServer,0x8" `
         /syncfromflags:manual `
@@ -1121,68 +1008,50 @@ try {
         ForEach-Object {
             Write-Status "$_" "INFO"
         }
-
     if ($LASTEXITCODE -ne 0) {
         throw "NTP-Konfiguration fehlgeschlagen"
     }
-
     # Windows-Zeitdienst neu starten
-
     Restart-Service W32Time -Force -ErrorAction Stop
-
     Start-Sleep -Seconds 3
-
     # Zeit synchronisieren
-
     $syncResult = & w32tm.exe /resync /force 2>&1
-
     foreach ($line in $syncResult) {
         Write-Status "$line" "INFO"
     }
-
     if ($LASTEXITCODE -ne 0) {
         throw "Zeit-Synchronisierung fehlgeschlagen"
     }
-
     Write-Status (
         "Zeitsynchronisierung mit $NtpServer erfolgreich"
     ) "OK"
-
     $script:Changes++
 }
 catch {
-
     Write-Status (
         "Zeitsynchronisierung fehlgeschlagen: $_"
     ) "ERROR"
 }
-
 # Synchronisierungsstatus kontrollieren
-
 try {
-
     $timeStatus = & w32tm.exe /query /status 2>&1
-
     foreach ($line in $timeStatus) {
         Write-Status "$line" "INFO"
     }
 }
 catch {
-
     Write-Status (
         "Zeitstatus konnte nicht gelesen werden: $_"
     ) "WARN"
 }
-
 # ============================================================
 # WINDOWS DEFENDER AUSNAHMEN PRUEFEN
 # ============================================================
-
+}
+if (Test-TaskSelected 15) {
 Write-Section "WINDOWS DEFENDER AUSNAHMEN"
-
 try {
     $defender = Get-MpPreference
-
     $required = @(
         "ALBIS.exe",
         "ALBISCS.exe"
@@ -1194,7 +1063,6 @@ try {
                 [System.IO.Path]::GetFileName($_) -ieq $exe
             }
         ).Count -gt 0
-
         if ($found) {
             Write-Status (
                 "Defender-Prozessausnahme vorhanden: $exe"
@@ -1212,10 +1080,8 @@ catch {
         "Defender-Einstellungen konnten nicht gelesen werden: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # IPv6 und QoS-Paketplaner ausschalten
-
 $Components = @(
     @{
         Name = "IPv6"
@@ -1226,43 +1092,30 @@ $Components = @(
         ComponentID = "ms_pacer"
     }
 )
-
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host " Netzwerkadapter - Statuspruefung" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
-
 foreach ($Component in $Components) {
-
     Write-Host "Pruefe: $($Component.Name)" -ForegroundColor Yellow
-
     $Bindings = Get-NetAdapterBinding `
         -ComponentID $Component.ComponentID `
         -ErrorAction SilentlyContinue
-
     if (-not $Bindings) {
         Write-Host "Keine entsprechenden Bindings gefunden." -ForegroundColor Gray
         continue
     }
-
     foreach ($Binding in $Bindings) {
-
         Write-Host "Adapter: $($Binding.Name)"
-
         if ($Binding.Enabled) {
-
             Write-Host "Status: AKTIVIERT" -ForegroundColor Green
-
             $Answer = Read-Host "Soll $($Component.Name) auf diesem Adapter deaktiviert werden? (J/N)"
-
             if ($Answer -match '^(J|JA)$') {
-
                 try {
                     Disable-NetAdapterBinding `
                         -Name $Binding.Name `
                         -ComponentID $Component.ComponentID `
                         -Confirm:$false `
                         -ErrorAction Stop
-
                     Write-Host "Erfolgreich deaktiviert." -ForegroundColor Green
                 }
                 catch {
@@ -1278,52 +1131,39 @@ foreach ($Component in $Components) {
         }
     }
 }
-
 # Abschliessende Statusanzeige IPv6 , QOS
-
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host " Abschliessende Statuskontrolle" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
-
 foreach ($Component in $Components) {
     Write-Host "$($Component.Name)" -ForegroundColor Yellow
     Get-NetAdapterBinding -ComponentID $Component.ComponentID |
         Format-Table Name, DisplayName, Enabled -AutoSize
 }
 Write-Host "Pruefung abgeschlossen." -ForegroundColor Cyan
-
+}
+if (Test-TaskSelected 16) {
 Write-Section "BENUTZERKONTENSTEUERUNG"
-
 try {
-
     $UACPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-
     $UAC = Get-ItemProperty `
         -Path $UACPath `
         -Name EnableLUA `
         -ErrorAction Stop
-
     if ($UAC.EnableLUA -eq 1) {
-
         Write-Status "Benutzerkontensteuerung ist AKTIVIERT" "WARN"
-
         $Answer = Read-Host "Benutzerkontensteuerung deaktivieren? (J/N)"
-
         if ($Answer -match '^(J|JA)$') {
-
             Set-ItemProperty `
                 -Path $UACPath `
                 -Name EnableLUA `
                 -Value 0 `
                 -Type DWord `
                 -ErrorAction Stop
-
             Write-Status "Benutzerkontensteuerung wurde deaktiviert" "OK"
-
             Write-Host "Ein Windows-Neustart ist erforderlich!" -ForegroundColor Yellow
         }
         else {
-
             Write-Status "Benutzerkontensteuerung bleibt aktiviert" "WARN"
         }
     }
@@ -1332,77 +1172,63 @@ try {
     }
 }
 catch {
-
     Write-Status "UAC-Pruefung fehlgeschlagen: $_" "ERROR"
 }
 # ============================================================
 # Animationen, Transparenz, Bildlaufleisten
-
+}
+if (Test-TaskSelected 17) {
 Write-Section "WINDOWS OBERFLAECHE"
-
 Invoke-Critical "Animationen, Transparenz und Bildlaufleisten optimieren" {
-
     # --------------------------------------------------------
     # Animationen deaktivieren
     # --------------------------------------------------------
-
     Set-RegistryValue `
         "HKCU:\Control Panel\Desktop\WindowMetrics" `
         "MinAnimate" `
         "0" `
         ([Microsoft.Win32.RegistryValueKind]::String)
-
     Set-RegistryValue `
         "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" `
         "VisualFXSetting" `
         2
-
     Set-RegistryValue `
         "HKCU:\Control Panel\Desktop" `
         "UserPreferencesMask" `
         ([byte[]](0x90,0x12,0x03,0x80,0x10,0,0,0)) `
         ([Microsoft.Win32.RegistryValueKind]::Binary)
-
     # --------------------------------------------------------
     # Transparenzeffekte deaktivieren
     # --------------------------------------------------------
-
     Set-RegistryValue `
         "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" `
         "EnableTransparency" `
         0
-
     # --------------------------------------------------------
     # Bildlaufleisten immer anzeigen
     # --------------------------------------------------------
-
     Set-RegistryValue `
         "HKCU:\Control Panel\Accessibility" `
         "DynamicScrollbars" `
         0
-
     Write-Status (
         "Animationen deaktiviert"
     ) "OK"
-
     Write-Status (
         "Transparenzeffekte deaktiviert"
     ) "OK"
-
     Write-Status (
         "Bildlaufleisten immer anzeigen aktiviert"
     ) "OK"
 }
-
 # ============================================================
 # DIENST UEBERWACHUNG VERTEILTER VERKNUEPFUNGEN deaktivieren
-
+}
+if (Test-TaskSelected 18) {
 Write-Section "DIENST VERTEILTE VERKNUEPFUNGEN"
-
 $service = Get-Service `
     -Name "TrkWks" `
     -ErrorAction SilentlyContinue
-
 if ($service) {
     try {
         if ($service.Status -ne "Stopped") {
@@ -1416,7 +1242,6 @@ if ($service) {
             -StartupType Disabled `
             -ErrorAction Stop
         $serviceCheck = Get-Service -Name "TrkWks"
-
         if (
             $serviceCheck.Status -eq "Stopped"
         ) {
@@ -1425,197 +1250,152 @@ if ($service) {
             ) "OK"
         }
         else {
-
             Write-Status (
                 "Dienst TrkWks ist noch aktiv"
             ) "ERROR"
         }
     }
     catch {
-
         Write-Status (
             "Dienst TrkWks konnte nicht deaktiviert werden: $_"
         ) "ERROR"
     }
 }
 else {
-
     Write-Status (
         "Dienst TrkWks nicht gefunden"
     ) "WARN"
 }
-
 # ============================================================
 # ENERGIEVERWALTUNG , BILDSCHIRMSCHONER auf 10 Min
-
+}
+if (Test-TaskSelected 19) {
 Write-Section "ENERGIEVERWALTUNG"
-
 # Aktiven Energieplan ermitteln
-
 $powerSchemeOutput = powercfg.exe /getactivescheme 2>&1
-
 $schemeGuid = [regex]::Match(
     ($powerSchemeOutput -join " "),
     "[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}"
 ).Value
-
 Write-Status "Aktiver Energieplan: $($powerSchemeOutput -join ' ')"
-
 # Einstellungen anzeigen
-
 $powerStates = powercfg.exe /a 2>&1
-
 foreach ($line in $powerStates) {
     Write-Status "$line"
 }
-
 # ------------------------------------------------------------
-
 Invoke-Critical "Standby, Monitorabschaltung und Bildschirmschoner konfigurieren" {
-
     if (!$schemeGuid) {
         throw "Aktiver Energieplan konnte nicht ermittelt werden"
     }
-
     # --------------------------------------------------------
     # Monitor niemals automatisch ausschalten
     # --------------------------------------------------------
-
     powercfg.exe /change monitor-timeout-ac 0
     if ($LASTEXITCODE -ne 0) {
         throw "Monitorabschaltung Netzbetrieb fehlgeschlagen"
     }
-
     powercfg.exe /change monitor-timeout-dc 0
     if ($LASTEXITCODE -ne 0) {
         throw "Monitorabschaltung Akkubetrieb fehlgeschlagen"
     }
-
     # --------------------------------------------------------
     # Automatischen Standby deaktivieren
     # --------------------------------------------------------
-
     powercfg.exe /change standby-timeout-ac 0
     if ($LASTEXITCODE -ne 0) {
         throw "Standby Netzbetrieb fehlgeschlagen"
     }
-
     powercfg.exe /change standby-timeout-dc 0
     if ($LASTEXITCODE -ne 0) {
         throw "Standby Akkubetrieb fehlgeschlagen"
     }
-
     # --------------------------------------------------------
     # Automatischen Ruhezustand deaktivieren
     # --------------------------------------------------------
-
     powercfg.exe /change hibernate-timeout-ac 0
     if ($LASTEXITCODE -ne 0) {
         throw "Ruhezustand Netzbetrieb fehlgeschlagen"
     }
-
     powercfg.exe /change hibernate-timeout-dc 0
     if ($LASTEXITCODE -ne 0) {
         throw "Ruhezustand Akkubetrieb fehlgeschlagen"
     }
-
     # --------------------------------------------------------
     # Energieplan direkt konfigurieren
     # --------------------------------------------------------
-
     powercfg.exe /setacvalueindex $schemeGuid SUB_VIDEO VIDEOIDLE 0
     if ($LASTEXITCODE -ne 0) {
         throw "Monitorzeitlimit AC fehlgeschlagen"
     }
-
     powercfg.exe /setdcvalueindex $schemeGuid SUB_VIDEO VIDEOIDLE 0
     if ($LASTEXITCODE -ne 0) {
         throw "Monitorzeitlimit DC fehlgeschlagen"
     }
-
     powercfg.exe /setacvalueindex $schemeGuid SUB_SLEEP STANDBYIDLE 0
     if ($LASTEXITCODE -ne 0) {
         throw "Standbyzeitlimit AC fehlgeschlagen"
     }
-
     powercfg.exe /setdcvalueindex $schemeGuid SUB_SLEEP STANDBYIDLE 0
     if ($LASTEXITCODE -ne 0) {
         throw "Standbyzeitlimit DC fehlgeschlagen"
     }
-
     powercfg.exe /setacvalueindex $schemeGuid SUB_SLEEP HIBERNATEIDLE 0
     if ($LASTEXITCODE -ne 0) {
         throw "Ruhezustand AC fehlgeschlagen"
     }
-
     powercfg.exe /setdcvalueindex $schemeGuid SUB_SLEEP HIBERNATEIDLE 0
     if ($LASTEXITCODE -ne 0) {
         throw "Ruhezustand DC fehlgeschlagen"
     }
-
     powercfg.exe /setactive $schemeGuid
     if ($LASTEXITCODE -ne 0) {
         throw "Energieplan konnte nicht aktiviert werden"
     }
-
     # --------------------------------------------------------
     # BILDSCHIRMSCHONER NACH 10 MINUTEN an
     # --------------------------------------------------------
-
     $screenPath = "HKCU:\Control Panel\Desktop"
-
     # Bildschirmschoner aktivieren
-
     Set-RegistryValue `
         $screenPath `
         "ScreenSaveActive" `
         "1" `
         ([Microsoft.Win32.RegistryValueKind]::String)
-
     # Wartezeit: 600 Sekunden = 10 Minuten
-
     Set-RegistryValue `
         $screenPath `
         "ScreenSaveTimeOut" `
         "600" `
         ([Microsoft.Win32.RegistryValueKind]::String)
-
     # Bildschirmschoner auswaehlen
     # Windows-Standard-Bildschirmschoner: Leerer Bildschirm
-
     Set-RegistryValue `
         $screenPath `
         "SCRNSAVE.EXE" `
         "$env:SystemRoot\System32\scrnsave.scr" `
         ([Microsoft.Win32.RegistryValueKind]::String)
-
     # Kein Kennwortzwang bei Reaktivierung erzwingen
     # Vorhandene Kennworteinstellung bleibt unveraendert.
-
     Write-Status "Monitorabschaltung deaktiviert" "OK"
     Write-Status "Automatischer Standby deaktiviert" "OK"
     Write-Status "Automatischer Ruhezustand deaktiviert" "OK"
     Write-Status "Bildschirmschoner aktiviert: 10 Minuten" "OK"
 }
-
 # KONTROLLE ENERGIE
-
+}
+if (Test-TaskSelected 20) {
 Write-Section "KONTROLLE ENERGIEVERWALTUNG"
-
 $powerQuery = powercfg.exe /query $schemeGuid 2>&1
-
 foreach ($line in $powerQuery) {
     if ($line -match "VIDEOIDLE|STANDBYIDLE|HIBERNATEIDLE") {
         Write-Status "$line"
     }
 }
-
 # Bildschirmschoner kontrollieren
-
 try {
     $screenSettings = Get-ItemProperty `
         -Path "HKCU:\Control Panel\Desktop"
-
     Write-Status (
         "Bildschirmschoner aktiv: $($screenSettings.ScreenSaveActive)"
     )
@@ -1627,19 +1407,15 @@ try {
     )
 }
 catch {
-
     Write-Status "Bildschirmschoner-Pruefung fehlgeschlagen: $_" "ERROR"
 }
-
 # ============================================================
 # REMOTEDESKTOP AKTIVIEREN
-
+}
+if (Test-TaskSelected 21) {
 Write-Section "REMOTEDESKTOP"
-
 Invoke-Critical "Windows-Remotedesktop aktivieren" {
-
     $RdpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
-
     # Remotedesktop aktivieren
     Set-ItemProperty `
         -Path $RdpPath `
@@ -1647,44 +1423,36 @@ Invoke-Critical "Windows-Remotedesktop aktivieren" {
         -Value 0 `
         -Type DWord `
         -ErrorAction Stop
-
     # RDP-Dienst aktivieren
     Set-Service `
         -Name "TermService" `
         -StartupType Manual `
         -ErrorAction Stop
-
     Start-Service `
         -Name "TermService" `
         -ErrorAction Stop
-
     # Windows-Firewallregeln fuer Remotedesktop aktivieren
     Enable-NetFirewallRule `
         -DisplayGroup "Remotedesktop" `
         -ErrorAction Stop
-
     # Kontrolle
     $rdpStatus = Get-ItemProperty `
         -Path $RdpPath `
         -Name "fDenyTSConnections"
-
     if ($rdpStatus.fDenyTSConnections -ne 0) {
         throw "Remotedesktop konnte nicht aktiviert werden"
     }
-
     Write-Status "Remotedesktop erfolgreich aktiviert" "OK"
     Write-Status "RDP-Dienst gestartet" "OK"
     Write-Status "Firewallregeln fuer Remotedesktop aktiviert" "OK"
 }
-
 # ============================================================
 # ENABLE LINKED CONNECTIONS
-
+}
+if (Test-TaskSelected 22) {
 Write-Section "ENABLE LINKED CONNECTIONS"
-
 $LinkedConnectionsPath = `
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
-
 try {
     $currentValue = (
         Get-ItemProperty `
@@ -1692,69 +1460,52 @@ try {
             -Name EnableLinkedConnections `
             -ErrorAction SilentlyContinue
     ).EnableLinkedConnections
-
     if ($currentValue -ne 1) {
-
         Invoke-Critical "EnableLinkedConnections aktivieren" {
-
             Set-RegistryValue `
                 -Path $LinkedConnectionsPath `
                 -Name "EnableLinkedConnections" `
                 -Value 1 `
                 -Type ([Microsoft.Win32.RegistryValueKind]::DWord)
-
             Write-Status (
                 "EnableLinkedConnections wurde aktiviert"
             ) "OK"
-
             Write-Status (
                 "Ein Windows-Neustart ist erforderlich"
             ) "WARN"
         }
     }
     else {
-
         Write-Status (
             "EnableLinkedConnections ist bereits aktiviert"
         ) "OK"
     }
 }
 catch {
-
     Write-Status (
         "EnableLinkedConnections konnte nicht gesetzt werden: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # CGM Ordner BERECHTIGUNGEN
-
-
+}
+if (Test-TaskSelected 23) {
 Write-Section "CGM BERECHTIGUNGEN"
-
 $cgmPath = "C:\CGM"
-
 if (Test-Path -LiteralPath $cgmPath) {
-
     $acl = Get-Acl -LiteralPath $cgmPath
-
     $hasFullControl = $false
-
     foreach ($rule in $acl.Access) {
-
         try {
-
             $sid = $rule.IdentityReference.Translate(
                 [System.Security.Principal.SecurityIdentifier]
             )
-
             if (
                 $sid.Value -eq "S-1-1-0" -and
                 $rule.AccessControlType -eq "Allow" -and
                 $rule.FileSystemRights -band
                 [System.Security.AccessControl.FileSystemRights]::FullControl
             ) {
-
                 $hasFullControl = $true
                 break
             }
@@ -1763,28 +1514,21 @@ if (Test-Path -LiteralPath $cgmPath) {
             continue
         }
     }
-
     if ($hasFullControl) {
-
         Write-Status (
             "Jeder besitzt bereits Vollzugriff auf C:\CGM"
         ) "OK"
     }
     else {
-
         Write-Status (
             "Vollzugriff fuer Jeder fehlt auf C:\CGM"
         ) "WARN"
-
         Invoke-Critical `
             "C:\CGM und Unterordner fuer Jeder mit Vollzugriff versehen" {
-
             $result = & icacls.exe "C:\CGM" `
                 /grant "*S-1-1-0:(OI)(CI)F" `
                 /T /C 2>&1
-
             foreach ($line in $result) {
-
                 Add-Content -Path $script:LogFile `
                     -Value $line -Encoding UTF8
             }
@@ -1795,17 +1539,14 @@ if (Test-Path -LiteralPath $cgmPath) {
     }
 }
 else {
-
     Write-Status "Verzeichnis C:\CGM nicht vorhanden" "ERROR"
 }
-
 # ============================================================
 # MTU 1300
-
+}
+if (Test-TaskSelected 24) {
 Write-Section "MTU NETZWERK"
-
 $TargetMTU = 1300
-
 try {
     $interfaces = @(
     Get-NetIPInterface |
@@ -1815,20 +1556,16 @@ try {
     }
 )
     if ($interfaces.Count -gt 0) {
-
         foreach ($interface in $interfaces) {
             $Adapter = $interface.InterfaceAlias
             $Family  = $interface.AddressFamily
             $CurrentMTU = $interface.NlMtu
-
             Write-Status (
                 "Adapter: $Adapter | " +
                 "Familie: $Family | " +
                 "MTU: $CurrentMTU Bytes"
             ) "OK"
-
             if ($CurrentMTU -ne $TargetMTU) {
-
                 Write-Host ""
                 Write-Host "MTU-Abweichung festgestellt!" -ForegroundColor Yellow
                 Write-Host "Adapter:       $Adapter"
@@ -1836,53 +1573,43 @@ try {
                 Write-Host "Aktuelle MTU:  $CurrentMTU"
                 Write-Host "Ziel-MTU:      $TargetMTU"
                 Write-Host ""
-
                 $Answer = Read-Host "MTU auf $TargetMTU setzen? (J/N)"
-
                 if ($Answer -match '^(J|JA)$') {
-
                     try {
                         Set-NetIPInterface `
                             -InterfaceIndex $interface.InterfaceIndex `
                             -AddressFamily $Family `
                             -NlMtuBytes $TargetMTU `
                             -ErrorAction Stop
-
                         $NewMTU = (
                             Get-NetIPInterface `
                                 -InterfaceIndex $interface.InterfaceIndex `
                                 -AddressFamily $Family
                         ).NlMtu
-
                         if ($NewMTU -eq $TargetMTU) {
-
                             Write-Status (
                                 "$Adapter ($Family): MTU erfolgreich auf $NewMTU gesetzt"
                             ) "OK"
                         }
                         else {
-
                             Write-Status (
                                 "$Adapter ($Family): MTU konnte nicht bestaetigt werden. Aktuell: $NewMTU"
                             ) "WARN"
                         }
                     }
                     catch {
-
                         Write-Status (
                             "MTU-Aenderung fehlgeschlagen: $_"
                         ) "ERROR"
                     }
                 }
                 else {
-
                     Write-Status (
                         "$Adapter ($Family): MTU unveraendert"
                     ) "WARN"
                 }
             }
             else {
-
                 Write-Status (
                     "$Adapter ($Family): MTU ist bereits korrekt"
                 ) "OK"
@@ -1898,49 +1625,37 @@ try {
 catch {
     Write-Status "MTU-Pruefung fehlgeschlagen: $_" "ERROR"
 }
-
 # ============================================================
 # NETZWERKPROFIL auf PRIVAT
-
+}
+if (Test-TaskSelected 25) {
 Write-Section "NETZWERKPROFIL"
-
 try {
-
     $profiles = @(
         Get-NetConnectionProfile
     )
-
     foreach ($profile in $profiles) {
-
         Write-Status (
             "Netzwerk: $($profile.Name) | " +
             "Profil: $($profile.NetworkCategory)"
         )
-
         if ($profile.NetworkCategory -ne "Private") {
-
             $networkName = $profile.Name
             $interfaceIndex = $profile.InterfaceIndex
-
             Invoke-Critical `
                 "Netzwerkprofil $networkName auf Privat setzen" {
-
                 Set-NetConnectionProfile `
                     -InterfaceIndex $interfaceIndex `
                     -NetworkCategory Private `
                     -ErrorAction Stop
-
                 $verify = Get-NetConnectionProfile `
                     -InterfaceIndex $interfaceIndex
-
                 if ($verify.NetworkCategory -ne "Private") {
-
                     throw "Netzwerkprofil wurde nicht auf Privat gesetzt"
                 }
             }
         }
         else {
-
             Write-Status (
                 "$($profile.Name) ist bereits Privat"
             ) "OK"
@@ -1948,88 +1663,70 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "Netzwerkprofil-Pruefung fehlgeschlagen: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # DEFENDER FIREWALL - PRIVATES PROFIL
-
+}
+if (Test-TaskSelected 26) {
 Write-Section "WINDOWS DEFENDER FIREWALL"
-
 try {
     $firewall = Get-NetFirewallProfile `
         -Profile Private `
         -ErrorAction Stop
-
     Write-Status (
         "Private Firewall aktiviert: $($firewall.Enabled)"
     )
-
     if ($firewall.Enabled) {
-
         Invoke-Critical `
             "Defender-Firewall fuer privates Netzwerk deaktivieren" {
-
             Set-NetFirewallProfile `
                 -Profile Private `
                 -Enabled False `
                 -ErrorAction Stop
-
             $verify = Get-NetFirewallProfile -Profile Private
-
             if ($verify.Enabled) {
-
                 throw "Firewall ist weiterhin aktiviert"
             }
         }
     }
     else {
-
         Write-Status (
             "Private Firewall bereits deaktiviert"
         ) "OK"
     }
 }
 catch {
-
     Write-Status (
         "Firewall-Einstellung fehlgeschlagen: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # FIREWALL-DIENST Restart
-
+}
+if (Test-TaskSelected 27) {
 Write-Section "FIREWALL DIENST"
-
 # WICHTIG:
 # MpsSvc ist ein geschuetzter Windows-Dienst.
 # Ein erzwungener Neustart kann von Windows verweigert werden.
 # Deshalb wird hier nur ein kontrollierter Neustart versucht.
-
 try {
     $mpsService = Get-Service -Name "MpsSvc" `
         -ErrorAction Stop
-
     Write-Status (
         "Aktueller Dienststatus MpsSvc: $($mpsService.Status)"
     )
-
     if ($mpsService.Status -eq "Running") {
-
         Restart-Service `
             -Name "MpsSvc" `
             -ErrorAction Stop
-
         Write-Status (
             "Firewall-Dienst wurde neu gestartet"
         ) "OK"
     }
     else {
-
         Write-Status (
             "MpsSvc ist nicht gestartet. " +
             "Ein Start wird nicht erzwungen."
@@ -2037,64 +1734,49 @@ try {
     }
 }
 catch {
-
     Write-Status (
         "MpsSvc konnte nicht neu gestartet werden: $_"
     ) "WARN"
 }
-
 # ============================================================
 # WINDOWS SMART APP CONTROL aus
-
+}
+if (Test-TaskSelected 28) {
 Write-Section "WINDOWS SMART APP CONTROL"
-
 try {
     $SmartAppPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
-
     $SmartApp = Get-ItemProperty `
         -Path $SmartAppPath `
         -ErrorAction Stop
-
     $SmartAppState = $SmartApp.SmartAppControlState
-
     switch ($SmartAppState) {
-
         0 {
             Write-Status "Smart App Control: AUS" "OK"
         }
-
         1 {
             Write-Status "Smart App Control: ERZWUNGEN / AKTIV" "WARN"
         }
-
         2 {
             Write-Status "Smart App Control: AUSWERTUNGSMODUS" "INFO"
         }
-
         default {
             Write-Status "Smart App Control: Unbekannter Status ($SmartAppState)" "WARN"
         }
     }
-
     Write-Status "Smart App Control Statuspruefung abgeschlossen" "OK"
 }
 catch {
-
     Write-Status "Smart App Control Status konnte nicht ermittelt werden: $_" "WARN"
 }
-
-
 # ============================================================
 # WINDOWS SPEICHEROPTIMIERUNG daily
-
+}
+if (Test-TaskSelected 29) {
 Write-Section "WINDOWS SPEICHEROPTIMIERUNG"
-
 # Storage Sense Registry-Konfiguration
 # Die Werte werden fuer den angemeldeten Benutzer gesetzt.
-
 $storagePath = `
     "HKCU:\Software\Microsoft\Windows\CurrentVersion\StorageSense\Parameters\StoragePolicy"
-
 try {
     if (!(Test-Path $storagePath)) {
         New-Item -Path $storagePath -Force | Out-Null
@@ -2102,14 +1784,10 @@ try {
     $storagePolicy = Get-ItemProperty `
         -Path $storagePath `
         -ErrorAction SilentlyContinue
-
     Write-Status "Storage-Sense-Konfiguration wird geprueft"
-
     # Storage Sense aktivieren: 01 = Ein
     if ($storagePolicy."01" -ne 1) {
-
         Invoke-Critical "Windows-Speicheroptimierung aktivieren" {
-
             Set-RegistryValue `
                 $storagePath `
                 "01" `
@@ -2117,25 +1795,20 @@ try {
         }
     }
     else {
-
         Write-Status "Speicheroptimierung bereits aktiviert" "OK"
     }
-
     # Automatische Bereinigung temporaerer Dateien
     if ($storagePolicy."2048" -ne 1) {
-
         Set-RegistryValue `
             $storagePath `
             "2048" `
             1
     }
-
     # Storage Sense: Ausfuehrung bei geringem Speicherplatz
     # Fuer woechentliche Ausfuehrung ist die Storage-Sense-
     # Benutzeroberflaeche bzw. die entsprechende Richtlinie
     # massgeblich. Registrywerte allein sind kein sicherer
     # Nachweis fuer die eingestellte Frequenz.
-
     Write-Status (
         "Storage-Sense-Registrywerte wurden kontrolliert"
     ) "OK"
@@ -2145,7 +1818,6 @@ catch {
         "Speicheroptimierung konnte nicht konfiguriert werden: $_"
     ) "ERROR"
 }
-
 # Storage Sense Aufgabenplanung anzeigen
 try {
     $storageTasks = Get-ScheduledTask `
@@ -2165,20 +1837,16 @@ catch {
         "Storage-Sense-Aufgaben konnten nicht gelesen werden"
     ) "WARN"
 }
-
 # ============================================================
 # TEMP ORDNER PRUEFEN 2 GB max
-
-
+}
+if (Test-TaskSelected 30) {
 Write-Section "TEMP ORDNER"
-
 function Get-FolderSizeGB {
-
     param(
         [string]$Path
     )
     if (!(Test-Path -LiteralPath $Path)) {
-
         return 0
     }
     try {
@@ -2192,9 +1860,7 @@ function Get-FolderSizeGB {
             $files |
             Measure-Object -Property Length -Sum
         ).Sum
-
         if ($null -eq $size) {
-
             $size = 0
         }
         return [math]::Round(
@@ -2202,53 +1868,38 @@ function Get-FolderSizeGB {
         )
     }
     catch {
-
         Write-Status (
             "Fehler bei Groessenermittlung $Path : $_"
         ) "WARN"
-
         return 0
     }
 }
-
 function Clean-TempFolder {
-
     param(
         [string]$Path
     )
-
     if (!(Test-Path -LiteralPath $Path)) {
-
         Write-Status (
             "Temp-Ordner nicht vorhanden: $Path"
         ) "WARN"
-
         return
     }
-
     $size = Get-FolderSizeGB -Path $Path
-
     Write-Status (
         "$Path - Gesamtgroesse: $size GB"
     )
-
     if ($size -gt 2) {
-
         Write-Status (
             "Temp-Ordner ueberschreitet die Grenze von 2 GB"
         ) "WARN"
-
         if (
             Confirm-Critical (
                 "Temp-Dateien in $Path bereinigen?"
             )
         ) {
-
             try {
-
                 # Nur Inhalte loeschen, nicht den Temp-Ordner selbst.
                 # Gesperrte Dateien werden uebersprungen.
-
                 Get-ChildItem `
                     -LiteralPath $Path `
                     -Force `
@@ -2257,62 +1908,49 @@ function Clean-TempFolder {
                         -Recurse `
                         -Force `
                         -ErrorAction SilentlyContinue
-
                 $newSize = Get-FolderSizeGB -Path $Path
-
                 Write-Status (
                     "Bereinigung abgeschlossen. Restgroesse: $newSize GB"
                 ) "OK"
-
                 if ($newSize -gt 2) {
-
                     Write-Status (
                         "Temp-Ordner liegt weiterhin ueber 2 GB"
                     ) "WARN"
                 }
             }
             catch {
-
                 Write-Status (
                     "Bereinigung fehlgeschlagen: $_"
                 ) "ERROR"
             }
         }
         else {
-
             Write-Status (
                 "Bereinigung wurde nicht durchgefuehrt"
             ) "WARN"
         }
     }
     else {
-
         Write-Status (
             "Temp-Ordner liegt innerhalb der Vorgabe"
         ) "OK"
     }
 }
-
 # Benutzer-Temp
-
 Clean-TempFolder -Path $env:TEMP
-
 # Globaler Windows-Temp
-
 Clean-TempFolder -Path "$env:SystemRoot\Temp"
-
 # ============================================================
 # IPV4 ROUTEN PRUEFEN
-
+}
+if (Test-TaskSelected 31) {
 $RequiredRoutes = @(
     "188.144.0.0",
     "100.102.0.0",
     "100.102.128.0",
     "100.103.0.0"
 )
-
 Write-Section "PERMANENTE IPV4 ROUTEN"
-
 try {
     $routes = @(
         Get-NetRoute `
@@ -2321,10 +1959,8 @@ try {
             -ErrorAction Stop
     )
     foreach ($required in $RequiredRoutes) {
-
         $found = @(
             $routes | Where-Object {
-
                 $_.DestinationPrefix -match (
                     "^" +
                     [regex]::Escape($required) +
@@ -2332,11 +1968,8 @@ try {
                 )
             }
         )
-
         if ($found.Count -gt 0) {
-
             foreach ($route in $found) {
-
                 Write-Status (
                     "Route vorhanden: " +
                     "$($route.DestinationPrefix) | " +
@@ -2346,7 +1979,6 @@ try {
             }
         }
         else {
-
             Write-Status (
                 "PERMANENTE ROUTE FEHLT: $required"
             ) "ERROR"
@@ -2358,35 +1990,29 @@ catch {
         "Permanente IPv4-Routen konnten nicht gelesen werden: $_"
     ) "ERROR"
 }
-
 # ============================================================
 # EVENT CHECK DISK (EVENT-ID 50 - 59, last 10 D)
-
+}
+if (Test-TaskSelected 32) {
 Write-Section "EREIGNISANZEIGE (SPEICHER / TREIBER ID 50-59)"
-
 try {
     $startDateCheck = (Get-Date).AddDays(-10)
-    
     # Abfrage der Ereignis-IDs 50 bis 59 im System-Log der letzten 10 Tage
     $eventFilter = @{
         LogName   = 'System'
         ID        = 50..59
         StartTime = $startDateCheck
     }
-
     $events = Get-WinEvent -FilterHashtable $eventFilter -ErrorAction SilentlyContinue
-
     if ($events) {
         $eventCount = @($events).Count
         Write-Status "Achtung: Es wurden $eventCount sicherheits- oder speicherrelevante Ereignisse (ID 50-59) in den letzten 10 Tagen gefunden!" "WARN"
-
         foreach ($evt in $events) {
             # Kurzausgabe fuer das Protokoll (auf eine Zeile reduziert)
             $cleanMessage = ($evt.Message -replace '[\r\n]+', ' ').Trim()
             if ($cleanMessage.Length -gt 120) {
                 $cleanMessage = $cleanMessage.Substring(0, 120) + "..."
             }
-            
             Write-Status "ID: $($evt.Id) | Zeit: $($evt.TimeCreated) | Quelle: $($evt.ProviderName) | $cleanMessage" "WARN"
         }
     }
@@ -2397,69 +2023,53 @@ try {
 catch {
     Write-Status "Ereignisanzeige konnte nicht erfolgreich abgefragt werden: $_" "INFO"
 }
-
 # Pause und auf beliebige Taste warten
 Write-Host ""
 Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host ""
-
 # ============================================================
 # ABSCHLUSSAUSWERTUNG
-
+}
 Write-Section "ALBIS SYSTEMCHECK - ABSCHLUSS"
-
 $endTime = Get-Date
-
 Write-Status "Systemcheck abgeschlossen"
 Write-Status "Computername: $env:COMPUTERNAME"
 Write-Status "Benutzer: $env:USERNAME"
 Write-Status "Windows: $($os.Caption)"
 Write-Status "Windows-Version: $displayVersion"
 Write-Status "Build: $build.$ubr"
-
 Write-Status "Beginn: $($startDate.ToString('dd.MM.yyyy HH:mm:ss'))"
 Write-Status "Ende: $($endTime.ToString('dd.MM.yyyy HH:mm:ss'))"
-
 # ============================================================
 # GESAMTERGEBNIS
-
 Write-Section "GESAMTERGEBNIS"
-
 Write-Status "Erfolgreiche Pruefungen: $script:Success"
 Write-Status "Warnungen: $script:Warnings"
 Write-Status "Fehler: $script:Errors"
 Write-Status "Durchgefuehrte Aenderungen: $script:Changes"
-
 if ($script:Errors -gt 0) {
-
     Write-Status (
         "SYSTEMCHECK MIT KRITISCHEN FEHLERN ABGESCHLOSSEN"
     ) "ERROR"
 }
 elseif ($script:Warnings -gt 0) {
-
     Write-Status (
         "SYSTEMCHECK MIT WARNUNGEN ABGESCHLOSSEN"
     ) "WARN"
 }
 else {
-
     Write-Status (
         "SYSTEMCHECK OHNE FESTGESTELLTE FEHLER ABGESCHLOSSEN"
     ) "OK"
 }
-
 # ============================================================
 # PRUEFBERICHT ABSCHLIESSEN
-
 Write-Section "PRUEFBERICHT"
-
 Add-Content -Path $script:LogFile -Value ""
 Add-Content -Path $script:LogFile -Value "==============================================="
 Add-Content -Path $script:LogFile -Value "AOW SYSTEMCHECK - ENDBERICHT"
 Add-Content -Path $script:LogFile -Value "==============================================="
-
 Add-Content -Path $script:LogFile -Value "Computer: $env:COMPUTERNAME"
 Add-Content -Path $script:LogFile -Value "Benutzer: $env:USERNAME"
 Add-Content -Path $script:LogFile -Value "Datum: $(Get-Date)"
@@ -2471,32 +2081,23 @@ Add-Content -Path $script:LogFile -Value "Aenderungen: $script:Changes"
 Add-Content -Path $script:LogFile -Value ""
 Add-Content -Path $script:LogFile -Value "Pruefbericht: $script:LogFile"
 Add-Content -Path $script:LogFile -Value "==============================================="
-
 Write-Host ""
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host "       AOW SYSTEMCHECK BEENDET" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
-
 Write-Host ""
 Write-Host "Erfolgreich: $script:Success" -ForegroundColor Green
 Write-Host "Warnungen:   $script:Warnings" -ForegroundColor Yellow
 Write-Host "Fehler:      $script:Errors" -ForegroundColor Red
 Write-Host "Aenderungen: $script:Changes" -ForegroundColor Cyan
-
 Write-Host ""
 Write-Host "Pruefbericht gespeichert unter:" -ForegroundColor Cyan
 Write-Host $script:LogFile -ForegroundColor White
-
 Write-Host ""
-
 # Bericht im Editor oeffnen?
-
 if (Confirm-Critical "Pruefbericht jetzt mit Editor oeffnen?") {
-
     Start-Process notepad.exe -ArgumentList "`"$script:LogFile`""
 }
-
 Write-Host ""
 Write-Host "ALBIS SYSTEMCHECK abgeschlossen." -ForegroundColor Green
-
 # ENDE DES GESAMTEN SCRIPTS
