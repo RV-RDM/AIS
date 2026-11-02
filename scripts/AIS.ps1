@@ -6,6 +6,79 @@
  PowerShell: 5.1 oder neuer
  Ausfuehrung: Administrator
 #>
+$taskNames = @(
+    "Systemwiederherstellung"
+    "Registry-Sicherung"
+    "SMB-Konfiguration"
+    "TCP-Konfiguration"
+    "Windows-Version"
+    "Arbeitsspeicher"
+    "Freier Speicherplatz"
+    "LOCAL.INI-Pruefung"
+    "ALBISGLB.INI-Pruefung (P-Laufwerk)"
+    "ALBISGLB.INI-Servername-Pruefung"
+    "HOSTS-Datei"
+    "Netzlaufwerke"
+    "DNS-Cache"
+    "Zeitsynchronisation"
+    "Windows Defender Ausnahmen"
+    "Benutzerkontensteuerung"
+    "Windows-Oberflaeche"
+    "Dienst Verteilte Verknuepfungen"
+    "Energieverwaltung"
+    "Kontrolle Energieverwaltung"
+    "Remotedesktop"
+    "Enable Linked Connections"
+    "CGM-Berechtigungen"
+    "MTU-Netzwerk"
+    "Netzwerkprofil"
+    "Windows Defender Firewall"
+    "Firewall-Dienst"
+    "Windows Smart App Control"
+    "Windows Speicheroptimierung"
+    "Temp-Ordner"
+    "Permanente IPv4-Routen"
+    "Ereignisanzeige (Speicher/Treiber)"
+)
+Write-Host "ALBIS SYSTEMCHECK - TAETIGKEITEN" -ForegroundColor Cyan
+for ($i = 0; $i -lt $taskNames.Count; $i++) {
+    Write-Host ("{0,2}. {1}" -f ($i + 1), $taskNames[$i])
+}
+Write-Host " 0. Alle Taetigkeiten ausfuehren"
+do {
+    $selection = Read-Host "Auswahl (z. B. 1,3,5; 0 = alles)"
+    $selectedTasks = @()
+    $validSelection = $true
+    foreach ($value in ($selection -split '\s*,\s*')) {
+        if ($value -notmatch '^\d+$') {
+            $validSelection = $false
+            break
+        }
+        $number = 0
+        if (-not [int]::TryParse($value, [ref]$number)) {
+            $validSelection = $false
+            break
+        }
+        if ($number -lt 0 -or $number -gt $taskNames.Count) {
+            $validSelection = $false
+            break
+        }
+        $selectedTasks += $number
+    }
+    if ($validSelection -and $selectedTasks.Count -eq 1 -and $selectedTasks[0] -eq 0) {
+        $script:SelectedTasks = @(1..$taskNames.Count)
+        break
+    }
+    if ($validSelection -and $selectedTasks.Count -gt 0 -and $selectedTasks -notcontains 0) {
+        $script:SelectedTasks = @($selectedTasks | Select-Object -Unique)
+        break
+    }
+    Write-Host "Ungueltige Auswahl. Bitte Taetigkeiten aus der Liste oder 0 eingeben." -ForegroundColor Yellow
+} while ($true)
+function Test-TaskSelected {
+    param([int]$TaskNumber)
+    return $script:SelectedTasks -contains $TaskNumber
+}
 $ErrorActionPreference = "Continue"
 $ProgressPreference = "SilentlyContinue"
 # ============================================================
@@ -120,6 +193,45 @@ function Set-RegistryValue {
         -PropertyType $Type `
         -Force | Out-Null
 }
+function Test-IniEncoding {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name
+    )
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    # Read the raw bytes so the original encoding remains untouched.
+    # Use byte values instead of umlauts in the script text.
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (mit BOM) statt ANSI kodiert ($Path)" }
+    }
+    if ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) {
+        return @{ Status = "WARN"; Text = "$Name ist UTF-16 statt ANSI kodiert ($Path)" }
+    }
+    # Pure ASCII contains no umlauts.
+    $hasHighBytes = $false
+    foreach ($b in $bytes) { if ($b -ge 0x80) { $hasHighBytes = $true; break } }
+    if (-not $hasHighBytes) {
+        return @{ Status = "WARN"; Text = "$Name enthaelt KEINE deutschen Umlaute ($Path)" }
+    }
+    # Strict decoding throws when the byte sequence is not valid UTF-8.
+    $isUtf8 = $true
+    try {
+        $strict = New-Object System.Text.UTF8Encoding($false, $true)
+        $null = $strict.GetString($bytes)
+    }
+    catch { $isUtf8 = $false }
+    if ($isUtf8) {
+        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (ohne BOM) statt ANSI kodiert ($Path)" }
+    }
+    # Check Windows-1252 bytes for German umlauts.
+    $umlautBytes = [byte[]](0xE4, 0xF6, 0xFC, 0xC4, 0xD6, 0xDC, 0xDF)
+    foreach ($b in $bytes) {
+        if ($umlautBytes -contains $b) {
+            return @{ Status = "OK"; Text = "$Name ist ANSI kodiert und enthaelt deutsche Umlaute ($Path)" }
+        }
+    }
+    return @{ Status = "WARN"; Text = "$Name ist ANSI kodiert, enthaelt aber KEINE deutschen Umlaute ($Path)" }
+}
 # ============================================================
 # STARTINFORMATIONEN
 # ============================================================
@@ -132,6 +244,7 @@ Write-Status "Protokoll: $script:LogFile"
 #-------------------------------------------------------------
 # ============================================================
 # SYSTEMWIEDERHERSTELLUNG auf 9% und einen WP erstellen
+if (Test-TaskSelected 1) {
 Write-Section "SYSTEMWIEDERHERSTELLUNG"
 # Systemwiederherstellung fuer C: aktivieren
 try {
@@ -162,6 +275,8 @@ Invoke-Critical "Wiederherstellungspunkt AOW erstellen" {
 }
 # ============================================================
 # REGISTRY-SICHERUNG HKEY_CURRENT_USER\SOFTWARE
+}
+if (Test-TaskSelected 2) {
 Write-Section "REGISTRY-SICHERUNG"
 try {
     # Sicherungsverzeichnis
@@ -211,6 +326,8 @@ catch {
 # ============================================================
 # SMB KONFIGURATION sichern
 # ============================================================
+}
+if (Test-TaskSelected 3) {
 Write-Section "SMB KONFIGURATION"
 Write-Status "SMB-Serverkonfiguration" "INFO"
 try {
@@ -369,6 +486,8 @@ catch {
 }
 # ============================================================
 # TCP KONFIGURATION sichern
+}
+if (Test-TaskSelected 4) {
 Write-Section "TCP KONFIGURATION"
 # TCP GLOBALE EINSTELLUNGEN
 Write-Status "Globale TCP-Konfiguration" "INFO"
@@ -544,6 +663,8 @@ Write-Status (
 ) "OK"
 # ============================================================
 # WINDOWS VERSION PRUEFEN
+}
+if (Test-TaskSelected 5) {
 Write-Section "WINDOWS VERSION"
 $os = Get-CimInstance Win32_OperatingSystem
 $reg = Get-ItemProperty `
@@ -571,6 +692,8 @@ else {
 # ============================================================
 # ARBEITSSPEICHER MIN 16 GB und Auslastung MAX 75%
 # ============================================================
+}
+if (Test-TaskSelected 6) {
 Write-Section "ARBEITSSPEICHER"
 $memory = Get-CimInstance Win32_OperatingSystem
 $totalRAM = [math]::Round(
@@ -598,6 +721,8 @@ else {
 # ============================================================
 # FREIER SPEICHERPLATZ MIND 10 GB
 # ============================================================
+}
+if (Test-TaskSelected 7) {
 Write-Section "FREIER SPEICHERPLATZ"
 $disks = @(
     Get-CimInstance Win32_LogicalDisk |
@@ -627,52 +752,10 @@ foreach ($disk in $disks) {
     }
 }
 # ============================================================
-# HILFSFUNKTION: INI-KODIERUNG PRUEFEN (ANSI mit Umlauten?)
-# Liest die Rohbytes, damit die Originalkodierung erhalten bleibt.
-# Verwendet bewusst keine Umlaute im Skripttext (Byte-Werte statt Zeichen).
-# ============================================================
-function Test-IniEncoding {
-    param(
-        [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Name
-    )
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    # 1) UTF-8 BOM (EF BB BF) bzw. UTF-16 BOM
-    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
-        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (mit BOM) statt ANSI kodiert ($Path)" }
-    }
-    if ($bytes.Length -ge 2 -and (($bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) -or ($bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF))) {
-        return @{ Status = "WARN"; Text = "$Name ist UTF-16 statt ANSI kodiert ($Path)" }
-    }
-    # 2) Reines ASCII? Dann keine Umlaute vorhanden
-    $hasHighBytes = $false
-    foreach ($b in $bytes) { if ($b -ge 0x80) { $hasHighBytes = $true; break } }
-    if (-not $hasHighBytes) {
-        return @{ Status = "WARN"; Text = "$Name enthaelt KEINE deutschen Umlaute ($Path)" }
-    }
-    # 3) Gueltiges UTF-8 ohne BOM? (strikter Decoder wirft bei ungueltigen Bytes)
-    $isUtf8 = $true
-    try {
-        $strict = New-Object System.Text.UTF8Encoding($false, $true)
-        $null = $strict.GetString($bytes)
-    }
-    catch { $isUtf8 = $false }
-    if ($isUtf8) {
-        return @{ Status = "WARN"; Text = "$Name ist UTF-8 (ohne BOM) statt ANSI kodiert ($Path)" }
-    }
-    # 4) ANSI (Windows-1252): Umlaut-Bytes suchen
-    #    E4=ae F6=oe FC=ue C4=Ae D6=Oe DC=Ue DF=ss
-    $umlautBytes = [byte[]](0xE4, 0xF6, 0xFC, 0xC4, 0xD6, 0xDC, 0xDF)
-    foreach ($b in $bytes) {
-        if ($umlautBytes -contains $b) {
-            return @{ Status = "OK"; Text = "$Name ist ANSI kodiert und enthaelt deutsche Umlaute ($Path)" }
-        }
-    }
-    return @{ Status = "WARN"; Text = "$Name ist ANSI kodiert, enthaelt aber KEINE deutschen Umlaute ($Path)" }
-}
-# ============================================================
 # LOCAL.INI PRUEFEN (Pfadsuche & Umlaut-Check)
 # ============================================================
+}
+if (Test-TaskSelected 8) {
 Write-Section "LOCAL.INI PRUEFUNG"
 $localIniPaths = @(
     "C:\albiswin\local.ini",
@@ -705,6 +788,8 @@ foreach ($iniPath in $localIniPaths) {
 # ============================================================
 # ALBISGLB.INI PRUEFEN (P:\ und P:\albiswin)
 # ============================================================
+}
+if (Test-TaskSelected 9) {
 Write-Section "ALBISGLB.INI PRUEFUNG (P-LAUFWERK)"
 $albisGlbPaths = @(
     "P:\albisglb.ini",
@@ -740,6 +825,8 @@ foreach ($iniPath in $albisGlbPaths) {
 # ============================================================
 # ALBISGLB.INI - SERVERNAME PRUEFEN (Hostname vs. IP)
 # ============================================================
+}
+if (Test-TaskSelected 10) {
 Write-Section "ALBISGLB.INI SERVERNAME PRUEFUNG"
 # Liste mÃ¶glicher Pfade fÃ¼r die albisglb.ini
 $glbIniSearchPaths = @(
@@ -787,6 +874,8 @@ if ($glbFoundCount -eq 0) {
 }
 # ============================================================
 # HOSTS DATEI
+}
+if (Test-TaskSelected 11) {
 Write-Section "HOSTS DATEI"
 $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
 if (Test-Path $hostsFile) {
@@ -842,6 +931,8 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host ""
 # ============================================================
 # NETZLAUFWERKE ueber HOSTNAME ODER IP
+}
+if (Test-TaskSelected 12) {
 Write-Section "NETZLAUFWERKE"
 $networkDrives = @(
     Get-CimInstance Win32_LogicalDisk `
@@ -880,6 +971,8 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host ""
 # ============================================================
 # DNS CACHE LEEREN
+}
+if (Test-TaskSelected 13) {
 Write-Section "DNS CACHE"
 try {
     $dnsResult = & ipconfig.exe /flushdns 2>&1
@@ -901,6 +994,8 @@ catch {
 }
 # ============================================================
 # DATUM UND UHRZEIT / NTP Sync
+}
+if (Test-TaskSelected 14) {
 $NtpServer = "ptbtime1.ptb.de"
 Write-Section "ZEITSYNCHRONISATION"
 try {
@@ -952,6 +1047,8 @@ catch {
 # ============================================================
 # WINDOWS DEFENDER AUSNAHMEN PRUEFEN
 # ============================================================
+}
+if (Test-TaskSelected 15) {
 Write-Section "WINDOWS DEFENDER AUSNAHMEN"
 try {
     $defender = Get-MpPreference
@@ -1044,6 +1141,8 @@ foreach ($Component in $Components) {
         Format-Table Name, DisplayName, Enabled -AutoSize
 }
 Write-Host "Pruefung abgeschlossen." -ForegroundColor Cyan
+}
+if (Test-TaskSelected 16) {
 Write-Section "BENUTZERKONTENSTEUERUNG"
 try {
     $UACPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
@@ -1077,6 +1176,8 @@ catch {
 }
 # ============================================================
 # Animationen, Transparenz, Bildlaufleisten
+}
+if (Test-TaskSelected 17) {
 Write-Section "WINDOWS OBERFLAECHE"
 Invoke-Critical "Animationen, Transparenz und Bildlaufleisten optimieren" {
     # --------------------------------------------------------
@@ -1122,6 +1223,8 @@ Invoke-Critical "Animationen, Transparenz und Bildlaufleisten optimieren" {
 }
 # ============================================================
 # DIENST UEBERWACHUNG VERTEILTER VERKNUEPFUNGEN deaktivieren
+}
+if (Test-TaskSelected 18) {
 Write-Section "DIENST VERTEILTE VERKNUEPFUNGEN"
 $service = Get-Service `
     -Name "TrkWks" `
@@ -1165,6 +1268,8 @@ else {
 }
 # ============================================================
 # ENERGIEVERWALTUNG , BILDSCHIRMSCHONER auf 10 Min
+}
+if (Test-TaskSelected 19) {
 Write-Section "ENERGIEVERWALTUNG"
 # Aktiven Energieplan ermitteln
 $powerSchemeOutput = powercfg.exe /getactivescheme 2>&1
@@ -1278,6 +1383,8 @@ Invoke-Critical "Standby, Monitorabschaltung und Bildschirmschoner konfigurieren
     Write-Status "Bildschirmschoner aktiviert: 10 Minuten" "OK"
 }
 # KONTROLLE ENERGIE
+}
+if (Test-TaskSelected 20) {
 Write-Section "KONTROLLE ENERGIEVERWALTUNG"
 $powerQuery = powercfg.exe /query $schemeGuid 2>&1
 foreach ($line in $powerQuery) {
@@ -1304,6 +1411,8 @@ catch {
 }
 # ============================================================
 # REMOTEDESKTOP AKTIVIEREN
+}
+if (Test-TaskSelected 21) {
 Write-Section "REMOTEDESKTOP"
 Invoke-Critical "Windows-Remotedesktop aktivieren" {
     $RdpPath = "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server"
@@ -1339,6 +1448,8 @@ Invoke-Critical "Windows-Remotedesktop aktivieren" {
 }
 # ============================================================
 # ENABLE LINKED CONNECTIONS
+}
+if (Test-TaskSelected 22) {
 Write-Section "ENABLE LINKED CONNECTIONS"
 $LinkedConnectionsPath = `
     "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
@@ -1377,6 +1488,8 @@ catch {
 }
 # ============================================================
 # CGM Ordner BERECHTIGUNGEN
+}
+if (Test-TaskSelected 23) {
 Write-Section "CGM BERECHTIGUNGEN"
 $cgmPath = "C:\CGM"
 if (Test-Path -LiteralPath $cgmPath) {
@@ -1430,6 +1543,8 @@ else {
 }
 # ============================================================
 # MTU 1300
+}
+if (Test-TaskSelected 24) {
 Write-Section "MTU NETZWERK"
 $TargetMTU = 1300
 try {
@@ -1512,6 +1627,8 @@ catch {
 }
 # ============================================================
 # NETZWERKPROFIL auf PRIVAT
+}
+if (Test-TaskSelected 25) {
 Write-Section "NETZWERKPROFIL"
 try {
     $profiles = @(
@@ -1552,6 +1669,8 @@ catch {
 }
 # ============================================================
 # DEFENDER FIREWALL - PRIVATES PROFIL
+}
+if (Test-TaskSelected 26) {
 Write-Section "WINDOWS DEFENDER FIREWALL"
 try {
     $firewall = Get-NetFirewallProfile `
@@ -1586,6 +1705,8 @@ catch {
 }
 # ============================================================
 # FIREWALL-DIENST Restart
+}
+if (Test-TaskSelected 27) {
 Write-Section "FIREWALL DIENST"
 # WICHTIG:
 # MpsSvc ist ein geschuetzter Windows-Dienst.
@@ -1619,6 +1740,8 @@ catch {
 }
 # ============================================================
 # WINDOWS SMART APP CONTROL aus
+}
+if (Test-TaskSelected 28) {
 Write-Section "WINDOWS SMART APP CONTROL"
 try {
     $SmartAppPath = "HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy"
@@ -1647,6 +1770,8 @@ catch {
 }
 # ============================================================
 # WINDOWS SPEICHEROPTIMIERUNG daily
+}
+if (Test-TaskSelected 29) {
 Write-Section "WINDOWS SPEICHEROPTIMIERUNG"
 # Storage Sense Registry-Konfiguration
 # Die Werte werden fuer den angemeldeten Benutzer gesetzt.
@@ -1714,6 +1839,8 @@ catch {
 }
 # ============================================================
 # TEMP ORDNER PRUEFEN 2 GB max
+}
+if (Test-TaskSelected 30) {
 Write-Section "TEMP ORDNER"
 function Get-FolderSizeGB {
     param(
@@ -1815,6 +1942,8 @@ Clean-TempFolder -Path $env:TEMP
 Clean-TempFolder -Path "$env:SystemRoot\Temp"
 # ============================================================
 # IPV4 ROUTEN PRUEFEN
+}
+if (Test-TaskSelected 31) {
 $RequiredRoutes = @(
     "188.144.0.0",
     "100.102.0.0",
@@ -1863,6 +1992,8 @@ catch {
 }
 # ============================================================
 # EVENT CHECK DISK (EVENT-ID 50 - 59, last 10 D)
+}
+if (Test-TaskSelected 32) {
 Write-Section "EREIGNISANZEIGE (SPEICHER / TREIBER ID 50-59)"
 try {
     $startDateCheck = (Get-Date).AddDays(-10)
@@ -1899,6 +2030,7 @@ $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 Write-Host ""
 # ============================================================
 # ABSCHLUSSAUSWERTUNG
+}
 Write-Section "ALBIS SYSTEMCHECK - ABSCHLUSS"
 $endTime = Get-Date
 Write-Status "Systemcheck abgeschlossen"
