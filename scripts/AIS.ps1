@@ -2144,17 +2144,17 @@ catch {
 }
 
 # ============================================================
-# EVENT CHECK DISK (EVENT-ID 50 - 59, last 10 D)
+# EVENT CHECK (EVENT-IDs 51, 55, 7, 11, last 10 D)
 
-Write-Section "EREIGNISANZEIGE (SPEICHER / TREIBER ID 50-59)"
+Write-Section "EREIGNISANZEIGE (EREIGNIS-IDs 51, 55, 7, 11)"
 
 try {
     $startDateCheck = (Get-Date).AddDays(-10)
     
-    # Abfrage der Ereignis-IDs 50 bis 59 im System-Log der letzten 10 Tage
+    # Abfrage der ausgewaehlten Ereignis-IDs im System-Log der letzten 10 Tage
     $eventFilter = @{
         LogName   = 'System'
-        ID        = 50..59
+        ID        = @(51, 55, 7, 11)
         StartTime = $startDateCheck
     }
 
@@ -2162,7 +2162,7 @@ try {
 
     if ($events) {
         $eventCount = @($events).Count
-        Write-Status "Achtung: Es wurden $eventCount sicherheits- oder speicherrelevante Ereignisse (ID 50-59) in den letzten 10 Tagen gefunden!" "WARN"
+        Write-Status "Achtung: Es wurden $eventCount Ereignisse mit den Ereignis-IDs 51, 55, 7 und 11 in den letzten 10 Tagen gefunden!" "WARN"
 
         foreach ($evt in $events) {
             # Kurzausgabe fuer das Protokoll (auf eine Zeile reduziert)
@@ -2175,7 +2175,7 @@ try {
         }
     }
     else {
-        Write-Status "Keine DISK-Fehler oder -Warnungen (Ereignis-ID 50-59) in den letzten 10 Tagen gefunden." "OK"
+        Write-Status "Keine Ereignisse mit den Ereignis-IDs 51, 55, 7 und 11 in den letzten 10 Tagen gefunden." "OK"
     }
 }
 catch {
