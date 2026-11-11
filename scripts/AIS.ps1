@@ -90,9 +90,14 @@ function Confirm-Critical {
     Write-Host "KRITISCHE SYSTEMAENDERUNG" -ForegroundColor Red
     Write-Host $Message -ForegroundColor Yellow
 
+    if (-not [Environment]::UserInteractive -or -not $Host -or -not $Host.UI -or -not $Host.UI.RawUI) {
+        Write-Status "Aenderung abgebrochen: Nicht-interaktive Umgebung" "WARN"
+        return $false
+    }
+
     $answer = Read-Host "Aenderung ausfuehren? (J/N)"
 
-    return ($answer -match "^(J|JA)$")
+    return ($answer -match "^(J|JA|Y|YES)$")
 }
 function Invoke-Critical {
 
@@ -236,7 +241,7 @@ try {
 
     Write-Status "Registry-Sicherung erfolgreich erstellt" "OK"
     Write-Status "Datei: $BackupFile" "OK"
-    Write-Status "DateigroeÃŸe: $BackupSize KB" "INFO"
+    Write-Status "Dateigröße: $BackupSize KB" "INFO"
 
     $script:Changes++
 }
@@ -684,15 +689,14 @@ Write-Status "Installationsdatum: $($os.InstallDate)"
 
 if (
     $os.Caption -match "Windows 11" -and
-    $displayVersion -eq "26H2" -and
-    $build -ge 26300
+    $build -ge 22000
 ) {
-    Write-Status "Windows 11 25H2 vorhanden" "OK"
+    Write-Status "Windows 11 erkannt: $displayVersion, Build $build.$ubr" "OK"
 }
 else {
     Write-Status (
-        "Windows 11 26H2 wird nicht erkannt! " +
-        "Installierte Version: $displayVersion, Build $build"
+        "Windows 11 wird nicht erkannt! " +
+        "Installierte Version: $displayVersion, Build $build.$ubr"
     ) "ERROR"
 }
 
@@ -824,9 +828,14 @@ else {
 }
 # Pause und auf beliebige Taste warten
 Write-Host ""
-Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-Write-Host ""
+if ([Environment]::UserInteractive -and $Host -and $Host.UI -and $Host.UI.RawUI) {
+    Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Write-Host ""
+}
+else {
+    Write-Status "Pause uebersprungen: Nicht-interaktive Umgebung" "WARN"
+}
 
 # ============================================================
 # Win11-EDITOR DATENSCHUTZ UND BENUTZBARKEIT
@@ -844,52 +853,42 @@ Write-Host ""
 Write-Host "Microsoft Notepad - Settings Import" -ForegroundColor Cyan
 Write-Host "-----------------------------------"
 
-while ($true) {
-
-    Write-Host ""
-    $Antwort = Read-Host "Import settings? (J/N)"
-
-    if ($Antwort -notmatch '^[JjYy]$') {
-        Write-Host "Import cancelled." -ForegroundColor Yellow
-        exit 0
-    }
-
-    # Check if Notepad is running
+if (-not (Confirm-Critical "Notepad-Einstellungen importieren?")) {
+    Write-Status "Notepad-Settings-Import abgebrochen" "WARN"
+}
+else {
     if (Get-Process Notepad -ErrorAction SilentlyContinue) {
-        Write-Host ""
-        Write-Host "Please close Notepad first!" -ForegroundColor Red
-        continue
+        Write-Status "Notepad ist noch aktiv. Bitte vor dem Import schließen." "WARN"
     }
+    else {
+        try {
+            # Download settings
+            Write-Host ""
+            Write-Host "Downloading settings ..."
 
-    break
-}
+            Invoke-WebRequest -Uri $Url -OutFile $TempFile `
+                -UseBasicParsing -ErrorAction Stop
 
-try {
-    # Download settings
-    Write-Host ""
-    Write-Host "Downloading settings ..."
+            if (!(Test-Path $TempFile) -or
+                (Get-Item $TempFile).Length -eq 0) {
+                throw "Download failed or file is empty."
+            }
 
-    Invoke-WebRequest -Uri $Url -OutFile $TempFile `
-        -UseBasicParsing -ErrorAction Stop
+            # Import settings without backup
+            Copy-Item $TempFile $Target -Force
 
-    if (!(Test-Path $TempFile) -or
-        (Get-Item $TempFile).Length -eq 0) {
-        throw "Download failed or file is empty."
+            Write-Host ""
+            Write-Host "Import completed successfully!" -ForegroundColor Green
+            Write-Host "You can now start Notepad."
+        }
+        catch {
+            Write-Host ("Import error: " + $_.Exception.Message) -ForegroundColor Red
+            Write-Status ("Notepad-Import fehlgeschlagen: $_") "ERROR"
+        }
+        finally {
+            Remove-Item $TempFile -Force -ErrorAction SilentlyContinue
+        }
     }
-
-    # Import settings without backup
-    Copy-Item $TempFile $Target -Force
-
-    Write-Host ""
-    Write-Host "Import completed successfully!" -ForegroundColor Green
-    Write-Host "You can now start Notepad."
-}
-catch {
-    Write-Host ("Import error: " + $_.Exception.Message) -ForegroundColor Red
-    exit 1
-}
-finally {
-    Remove-Item $TempFile -Force -ErrorAction SilentlyContinue
 }
 
 
@@ -1043,9 +1042,7 @@ foreach ($Component in $Components) {
 
             Write-Host "Status: AKTIVIERT" -ForegroundColor Green
 
-            $Answer = Read-Host "Soll $($Component.Name) auf diesem Adapter deaktiviert werden? (J/N)"
-
-            if ($Answer -match '^(J|JA)$') {
+            if (Confirm-Critical "Soll $($Component.Name) auf diesem Adapter deaktiviert werden?") {
 
                 try {
                     Disable-NetAdapterBinding `
@@ -1098,9 +1095,7 @@ try {
 
         Write-Status "Benutzerkontensteuerung ist AKTIVIERT" "WARN"
 
-        $Answer = Read-Host "Benutzerkontensteuerung deaktivieren? (J/N)"
-
-        if ($Answer -match '^(J|JA)$') {
+        if (Confirm-Critical "Benutzerkontensteuerung deaktivieren?") {
 
             Set-ItemProperty `
                 -Path $UACPath `
@@ -1626,9 +1621,7 @@ try {
                 Write-Host "Ziel-MTU:      $TargetMTU"
                 Write-Host ""
 
-                $Answer = Read-Host "MTU auf $TargetMTU setzen? (J/N)"
-
-                if ($Answer -match '^(J|JA)$') {
+                if (Confirm-Critical "MTU auf $TargetMTU setzen?") {
 
                     try {
                         Set-NetIPInterface `
@@ -2191,9 +2184,14 @@ catch {
 
 # Pause und auf beliebige Taste warten
 Write-Host ""
-Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-Write-Host ""
+if ([Environment]::UserInteractive -and $Host -and $Host.UI -and $Host.UI.RawUI) {
+    Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Write-Host ""
+}
+else {
+    Write-Status "Pause uebersprungen: Nicht-interaktive Umgebung" "WARN"
+}
 
 # ============================================================
 # DNS CACHE LEEREN
