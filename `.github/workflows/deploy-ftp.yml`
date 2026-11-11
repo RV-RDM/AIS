@@ -1,0 +1,30 @@
+name: Deploy AIS script via FTP
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Upload AIS.ps1 to FTP
+        shell: bash
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASSWORD: ${{ secrets.FTP_PASSWORD }}
+          FTP_TARGET_DIR: ${{ secrets.FTP_TARGET_DIR }}
+        run: |
+          mkdir -p .tmp
+          echo "Uploading scripts/AIS.ps1 to FTP..."
+          curl --fail --silent --show-error \
+            --ftp-create-dirs \
+            --user "$FTP_USER:$FTP_PASSWORD" \
+            --upload-file scripts/AIS.ps1 \
+            "ftp://$FTP_HOST/$FTP_TARGET_DIR/AIS.ps1"
