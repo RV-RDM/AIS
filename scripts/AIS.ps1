@@ -2144,9 +2144,9 @@ catch {
 }
 
 # ============================================================
-# EVENT CHECK (EVENT-IDs 51, 55, 7, 11, last 10 D)
+# EVENT CHECK (EVENT-IDs 50, 51, 55, 7, 11, last 10 D)
 
-Write-Section "EREIGNISANZEIGE (EREIGNIS-IDs 51, 55, 7, 11)"
+Write-Section "EREIGNISANZEIGE (EREIGNIS-IDs 50, 51, 55, 7, 11)"
 
 try {
     $startDateCheck = (Get-Date).AddDays(-10)
@@ -2154,7 +2154,7 @@ try {
     # Abfrage der ausgewaehlten Ereignis-IDs im System-Log der letzten 10 Tage
     $eventFilter = @{
         LogName   = 'System'
-        ID        = @(51, 55, 7, 11)
+        ID        = @(50, 51, 55, 7, 11)
         StartTime = $startDateCheck
     }
 
@@ -2162,7 +2162,7 @@ try {
 
     if ($events) {
         $eventCount = @($events).Count
-        Write-Status "Achtung: Es wurden $eventCount Ereignisse mit den Ereignis-IDs 51, 55, 7 und 11 in den letzten 10 Tagen gefunden!" "WARN"
+        Write-Status "Achtung: Es wurden $eventCount Ereignisse mit den Ereignis-IDs 50, 51, 55, 7 und 11 in den letzten 10 Tagen gefunden!" "WARN"
 
         foreach ($evt in $events) {
             # Kurzausgabe fuer das Protokoll (auf eine Zeile reduziert)
@@ -2175,7 +2175,7 @@ try {
         }
     }
     else {
-        Write-Status "Keine Ereignisse mit den Ereignis-IDs 51, 55, 7 und 11 in den letzten 10 Tagen gefunden." "OK"
+        Write-Status "Keine Ereignisse mit den Ereignis-IDs 50, 51, 55, 7 und 11 in den letzten 10 Tagen gefunden." "OK"
     }
 }
 catch {
