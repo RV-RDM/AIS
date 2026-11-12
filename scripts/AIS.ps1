@@ -140,11 +140,81 @@ function Set-RegistryValue {
         -Force | Out-Null
 }
 
+$script:AISTasks = @(
+    [pscustomobject]@{ Id = "system-restore"; Title = "Systemwiederherstellung" }
+    [pscustomobject]@{ Id = "registry-backup"; Title = "Registry-Sicherung" }
+    [pscustomobject]@{ Id = "smb"; Title = "SMB-Konfiguration und Verbindungen" }
+    [pscustomobject]@{ Id = "tcp"; Title = "TCP-Konfiguration und Verbindungen" }
+    [pscustomobject]@{ Id = "windows-version"; Title = "Windows-Version pruefen" }
+    [pscustomobject]@{ Id = "memory"; Title = "Arbeitsspeicher pruefen" }
+    [pscustomobject]@{ Id = "disk-space"; Title = "Freien Speicherplatz pruefen" }
+    [pscustomobject]@{ Id = "hosts-file"; Title = "Hosts-Datei pruefen" }
+    [pscustomobject]@{ Id = "notepad-settings"; Title = "Notepad-Einstellungen importieren" }
+    [pscustomobject]@{ Id = "time-sync"; Title = "Datum und Uhrzeit synchronisieren" }
+    [pscustomobject]@{ Id = "defender-exclusions"; Title = "Windows-Defender-Ausnahmen pruefen" }
+    [pscustomobject]@{ Id = "ipv6-qos"; Title = "IPv6 und QoS-Paketplaner pruefen/aendern" }
+    [pscustomobject]@{ Id = "uac"; Title = "Benutzerkontensteuerung pruefen" }
+    [pscustomobject]@{ Id = "windows-ui"; Title = "Windows-Oberflaeche optimieren" }
+    [pscustomobject]@{ Id = "distributed-links"; Title = "Dienst fuer verteilte Verknuepfungen" }
+    [pscustomobject]@{ Id = "power"; Title = "Energieverwaltung und Bildschirmschoner" }
+    [pscustomobject]@{ Id = "rdp"; Title = "Remotedesktop aktivieren" }
+    [pscustomobject]@{ Id = "linked-connections"; Title = "Linked Connections aktivieren" }
+    [pscustomobject]@{ Id = "cgm-permissions"; Title = "CGM-Ordnerberechtigungen pruefen" }
+    [pscustomobject]@{ Id = "mtu"; Title = "MTU pruefen und anpassen" }
+    [pscustomobject]@{ Id = "network-profile"; Title = "Netzwerkprofil auf Privat setzen" }
+    [pscustomobject]@{ Id = "firewall-profile"; Title = "Private Defender-Firewall pruefen" }
+    [pscustomobject]@{ Id = "firewall-service"; Title = "Firewall-Dienst pruefen/neustarten" }
+    [pscustomobject]@{ Id = "smart-app-control"; Title = "Smart App Control pruefen" }
+    [pscustomobject]@{ Id = "storage-sense"; Title = "Windows-Speicheroptimierung pruefen" }
+    [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner pruefen/bereinigen" }
+    [pscustomobject]@{ Id = "ipv4-routes"; Title = "Permanente IPv4-Routen pruefen" }
+    [pscustomobject]@{ Id = "event-log"; Title = "Systemereignisse pruefen" }
+    [pscustomobject]@{ Id = "dns-cache"; Title = "DNS-Cache leeren" }
+)
+
+$script:AISTaskChoices = @{}
+Write-Host ""
+Write-Host "AIS SYSTEMCHECK - AUFGABE AUSWAEHLEN" -ForegroundColor Cyan
+Write-Host "0  - Alle Aufgaben ausfuehren"
+for ($index = 0; $index -lt $script:AISTasks.Count; $index++) {
+    $choice = [string]($index + 1)
+    $script:AISTaskChoices[$choice] = $script:AISTasks[$index]
+    Write-Host ("{0,2} - {1}" -f $choice, $script:AISTasks[$index].Title)
+}
+Write-Host "Q  - Beenden"
+
+while ($true) {
+    $selection = (Read-Host "Auswahl").Trim()
+
+    if ($selection -eq "0") {
+        $script:SelectedTaskIds = @(
+            $script:AISTasks | ForEach-Object { $_.Id }
+        )
+        $script:SelectionDescription = "Alle Aufgaben"
+        break
+    }
+
+    if ($script:AISTaskChoices.ContainsKey($selection)) {
+        $selectedTask = $script:AISTaskChoices[$selection]
+        $script:SelectedTaskIds = @($selectedTask.Id)
+        $script:SelectionDescription = $selectedTask.Title
+        break
+    }
+
+    if ($selection -match "^(Q|QUIT)$") {
+        Write-Host "AIS SYSTEMCHECK abgebrochen." -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "Ungueltige Auswahl. Bitte eine Nummer, 0 oder Q eingeben." -ForegroundColor Yellow
+}
+
 # ============================================================
 # STARTINFORMATIONEN
 
 Write-Section "ALBIS SYSTEMCHECK - START"
 
+Write-Status "Auswahl: $script:SelectionDescription"
 Write-Status "Computername: $env:COMPUTERNAME"
 Write-Status "Benutzer: $env:USERNAME"
 Write-Status "PowerShell-Version: $($PSVersionTable.PSVersion)"
@@ -155,6 +225,7 @@ Write-Status "Protokoll: $script:LogFile"
 # ============================================================
 # SYSTEMWIEDERHERSTELLUNG auf 9% und einen WP erstellen
 
+if ($script:SelectedTaskIds -contains "system-restore") {
 Write-Section "SYSTEMWIEDERHERSTELLUNG"
 
 # Systemwiederherstellung fuer C: aktivieren
@@ -188,10 +259,12 @@ Invoke-Critical "Wiederherstellungspunkt AIS erstellen" {
 
     Write-Status "Wiederherstellungspunkt AIS wurde erstellt" "OK"
 }
+}
 
 # ============================================================
 # REGISTRY-SICHERUNG HKEY_CURRENT_USER\SOFTWARE
 
+if ($script:SelectedTaskIds -contains "registry-backup") {
 Write-Section "REGISTRY-SICHERUNG"
 
 try {
@@ -251,10 +324,12 @@ catch {
         "Registry-Sicherung fehlgeschlagen: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # SMB KONFIGURATION pruefen
 
+if ($script:SelectedTaskIds -contains "smb") {
 
 Write-Section "SMB KONFIGURATION"
 
@@ -446,10 +521,12 @@ catch {
         "SMB-Multichannel-Status nicht verfuegbar: $_"
     ) "WARN"
 }
+}
 
 # ============================================================
 # TCP KONFIGURATION pruefen
 
+if ($script:SelectedTaskIds -contains "tcp") {
 Write-Section "TCP KONFIGURATION"
 
 # TCP GLOBALE EINSTELLUNGEN
@@ -664,13 +741,18 @@ catch {
     ) "WARN"
 }
 
-Write-Status (
-    "SMB- und TCP-Bestandsaufnahme abgeschlossen"
-) "OK"
+if ($script:SelectedTaskIds -contains "smb") {
+    Write-Status "SMB- und TCP-Bestandsaufnahme abgeschlossen" "OK"
+}
+else {
+    Write-Status "TCP-Bestandsaufnahme abgeschlossen" "OK"
+}
+}
 
 # ============================================================
 # WINDOWS VERSION PRUEFEN
 
+if ($script:SelectedTaskIds -contains "windows-version") {
 Write-Section "WINDOWS VERSION"
 
 $os = Get-CimInstance Win32_OperatingSystem
@@ -699,10 +781,12 @@ else {
         "Installierte Version: $displayVersion, Build $build.$ubr"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # ARBEITSSPEICHER MIN 16 GB und Auslastung MAX 75%
 
+if ($script:SelectedTaskIds -contains "memory") {
 Write-Section "ARBEITSSPEICHER"
 
 $memory = Get-CimInstance Win32_OperatingSystem
@@ -734,10 +818,12 @@ else {
         "Mindestens 16 GB und 35% frei erforderlich."
     ) "ERROR"
 }
+}
 
 # ============================================================
 # FREIER HDD-SPEICHERPLATZ MIND 10 GB pruefen
 
+if ($script:SelectedTaskIds -contains "disk-space") {
 
 Write-Section "FREIER SPEICHERPLATZ"
 
@@ -768,10 +854,12 @@ foreach ($disk in $disks) {
         ) "ERROR"
     }
 }
+}
 
 # ============================================================
 # HOSTS DATEI pruefen auf manuelle Werte
 
+if ($script:SelectedTaskIds -contains "hosts-file") {
 Write-Section "HOSTS DATEI"
 
 $hostsFile = "$env:SystemRoot\System32\drivers\etc\hosts"
@@ -836,11 +924,13 @@ if ([Environment]::UserInteractive -and $Host -and $Host.UI -and $Host.UI.RawUI)
 else {
     Write-Status "Pause uebersprungen: Nicht-interaktive Umgebung" "WARN"
 }
+}
 
 # ============================================================
 # Win11-EDITOR DATENSCHUTZ UND BENUTZBARKEIT
 # Microsoft Notepad - Settings import to PC
 
+if ($script:SelectedTaskIds -contains "notepad-settings") {
 $Url = "https://www.rdm-systems.de/ais/editor/settings.dat"
 
 
@@ -890,11 +980,13 @@ else {
         }
     }
 }
+}
 
 
 # ============================================================
 # DATUM UND UHRZEIT / NTP sync
 
+if ($script:SelectedTaskIds -contains "time-sync") {
 $NtpServer = "ptbtime1.ptb.de"
 
 Write-Section "ZEITSYNCHRONISATION"
@@ -963,10 +1055,12 @@ catch {
         "Zeitstatus konnte nicht gelesen werden: $_"
     ) "WARN"
 }
+}
 
 # ============================================================
 # WINDOWS DEFENDER AUSNAHMEN nur PRUEFEN
 
+if ($script:SelectedTaskIds -contains "defender-exclusions") {
 
 Write-Section "WINDOWS DEFENDER AUSNAHMEN"
 
@@ -1002,10 +1096,12 @@ catch {
         "Defender-Einstellungen konnten nicht gelesen werden: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # IPv6 und QoS-Paketplaner ausschalten (beta)
 
+if ($script:SelectedTaskIds -contains "ipv6-qos") {
 $Components = @(
     @{
         Name = "IPv6"
@@ -1079,7 +1175,9 @@ foreach ($Component in $Components) {
         Format-Table Name, DisplayName, Enabled -AutoSize
 }
 Write-Host "Pruefung abgeschlossen." -ForegroundColor Cyan
+}
 
+if ($script:SelectedTaskIds -contains "uac") {
 Write-Section "BENUTZERKONTENSTEUERUNG"
 
 try {
@@ -1121,9 +1219,11 @@ catch {
 
     Write-Status "UAC-Pruefung fehlgeschlagen: $_" "ERROR"
 }
+}
 # ============================================================
 # Animationen, Transparenz, Bildlaufleisten
 
+if ($script:SelectedTaskIds -contains "windows-ui") {
 Write-Section "WINDOWS OBERFLAECHE"
 
 Invoke-Critical "Animationen, Transparenz und Bildlaufleisten optimieren" {
@@ -1178,10 +1278,12 @@ Invoke-Critical "Animationen, Transparenz und Bildlaufleisten optimieren" {
         "Bildlaufleisten immer anzeigen aktiviert"
     ) "OK"
 }
+}
 
 # ============================================================
 # DIENST UEBERWACHUNG VERTEILTER VERKNUEPFUNGEN deaktivieren
 
+if ($script:SelectedTaskIds -contains "distributed-links") {
 Write-Section "DIENST VERTEILTE VERKNUEPFUNGEN"
 
 $service = Get-Service `
@@ -1229,10 +1331,12 @@ else {
         "Dienst TrkWks nicht gefunden"
     ) "WARN"
 }
+}
 
 # ============================================================
 # ENERGIEVERWALTUNG aus und BILDSCHIRMSCHONER auf 10 Minuten
 
+if ($script:SelectedTaskIds -contains "power") {
 Write-Section "ENERGIEVERWALTUNG"
 
 # Aktiven Energieplan ermitteln
@@ -1415,10 +1519,12 @@ catch {
 
     Write-Status "Bildschirmschoner-Pruefung fehlgeschlagen: $_" "ERROR"
 }
+}
 
 # ============================================================
 # RDP AKTIVIEREN
 
+if ($script:SelectedTaskIds -contains "rdp") {
 Write-Section "REMOTEDESKTOP"
 
 Invoke-Critical "Windows-Remotedesktop aktivieren" {
@@ -1461,10 +1567,12 @@ Invoke-Critical "Windows-Remotedesktop aktivieren" {
     Write-Status "RDP-Dienst gestartet" "OK"
     Write-Status "Firewallregeln fuer Remotedesktop aktiviert" "OK"
 }
+}
 
 # ============================================================
 # ENABLE LINKED CONNECTIONS
 
+if ($script:SelectedTaskIds -contains "linked-connections") {
 Write-Section "ENABLE LINKED CONNECTIONS"
 
 $LinkedConnectionsPath = `
@@ -1510,10 +1618,12 @@ catch {
         "EnableLinkedConnections konnte nicht gesetzt werden: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # CGM Ordner BERECHTIGUNGEN pruefen und setzen JEDER
 
+if ($script:SelectedTaskIds -contains "cgm-permissions") {
 Write-Section "CGM BERECHTIGUNGEN"
 
 $cgmPath = "C:\CGM"
@@ -1582,10 +1692,12 @@ else {
 
     Write-Status "Verzeichnis C:\CGM nicht vorhanden" "ERROR"
 }
+}
 
 # ============================================================
 # MTU 1300 pruefen und fragen
 
+if ($script:SelectedTaskIds -contains "mtu") {
 Write-Section "MTU NETZWERK"
 
 $TargetMTU = 1300
@@ -1680,10 +1792,13 @@ try {
 catch {
     Write-Status "MTU-Pruefung fehlgeschlagen: $_" "ERROR"
 }
+}
 
 # ============================================================
 # NETZWERKPROFIL auf PRIVAT setzen
 # was passiert wenn Domain?
+
+if ($script:SelectedTaskIds -contains "network-profile") {
 
 Write-Section "NETZWERKPROFIL"
 
@@ -1736,11 +1851,13 @@ catch {
         "Netzwerkprofil-Pruefung fehlgeschlagen: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # DEFENDER FIREWALL - PRIVATES PROFIL setzen
 # was passiert bei Domain?
 
+if ($script:SelectedTaskIds -contains "firewall-profile") {
 Write-Section "WINDOWS DEFENDER FIREWALL"
 
 try {
@@ -1783,10 +1900,12 @@ catch {
         "Firewall-Einstellung fehlgeschlagen: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # FIREWALL-DIENST Restart, Aenderungen aktivieren/uebernehmen
 
+if ($script:SelectedTaskIds -contains "firewall-service") {
 Write-Section "FIREWALL DIENST"
 
 # WICHTIG:
@@ -1826,10 +1945,12 @@ catch {
         "MpsSvc konnte nicht neu gestartet werden: $_"
     ) "WARN"
 }
+}
 
 # ============================================================
 # WINDOWS SMART APP CONTROL aus
 
+if ($script:SelectedTaskIds -contains "smart-app-control") {
 Write-Section "WINDOWS SMART APP CONTROL"
 
 try {
@@ -1866,11 +1987,13 @@ catch {
 
     Write-Status "Smart App Control Status konnte nicht ermittelt werden: $_" "WARN"
 }
+}
 
 
 # ============================================================
 # WINDOWS SPEICHEROPTIMIERUNG daily
 
+if ($script:SelectedTaskIds -contains "storage-sense") {
 Write-Section "WINDOWS SPEICHEROPTIMIERUNG"
 
 # Storage Sense Registry-Konfiguration
@@ -1949,10 +2072,12 @@ catch {
         "Storage-Sense-Aufgaben konnten nicht gelesen werden"
     ) "WARN"
 }
+}
 
 # ============================================================
 # TEMP ORDNER PRUEFEN 2 GB max
 
+if ($script:SelectedTaskIds -contains "temp-folders") {
 
 Write-Section "TEMP ORDNER"
 
@@ -2084,10 +2209,12 @@ Clean-TempFolder -Path $env:TEMP
 # Globaler Windows-Temp
 
 Clean-TempFolder -Path "$env:SystemRoot\Temp"
+}
 
 # ============================================================
 # IPV4 ROUTEN PRUEFEN ob existent
 
+if ($script:SelectedTaskIds -contains "ipv4-routes") {
 $RequiredRoutes = @(
     "188.144.0.0",
     "100.102.0.0",
@@ -2142,10 +2269,12 @@ catch {
         "Permanente IPv4-Routen konnten nicht gelesen werden: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # EVENT CHECK (EVENT-IDs 50, 51, 55, 7, 11, last 10 D)
 
+if ($script:SelectedTaskIds -contains "event-log") {
 Write-Section "EREIGNISANZEIGE (EREIGNIS-IDs 50, 51, 55, 7, 11)"
 
 try {
@@ -2192,9 +2321,12 @@ if ([Environment]::UserInteractive -and $Host -and $Host.UI -and $Host.UI.RawUI)
 else {
     Write-Status "Pause uebersprungen: Nicht-interaktive Umgebung" "WARN"
 }
+}
 
 # ============================================================
 # DNS CACHE LEEREN
+
+if ($script:SelectedTaskIds -contains "dns-cache") {
 
 Write-Section "DNS CACHE"
 
@@ -2222,6 +2354,7 @@ catch {
         "DNS-Cache konnte nicht geleert werden: $_"
     ) "ERROR"
 }
+}
 
 # ============================================================
 # ABSCHLUSSAUSWERTUNG
@@ -2230,12 +2363,19 @@ Write-Section "ALBIS SYSTEMCHECK - ABSCHLUSS"
 
 $endTime = Get-Date
 
-Write-Status "Systemcheck abgeschlossen"
+if ($script:SelectedTaskIds.Count -eq $script:AISTasks.Count) {
+    Write-Status "Systemcheck abgeschlossen"
+}
+else {
+    Write-Status "Ausgewaehlte Aufgabe(n) abgeschlossen: $script:SelectionDescription"
+}
 Write-Status "Computername: $env:COMPUTERNAME"
 Write-Status "Benutzer: $env:USERNAME"
-Write-Status "Windows: $($os.Caption)"
-Write-Status "Windows-Version: $displayVersion"
-Write-Status "Build: $build.$ubr"
+if ($script:SelectedTaskIds -contains "windows-version") {
+    Write-Status "Windows: $($os.Caption)"
+    Write-Status "Windows-Version: $displayVersion"
+    Write-Status "Build: $build.$ubr"
+}
 
 Write-Status "Beginn: $($startDate.ToString('dd.MM.yyyy HH:mm:ss'))"
 Write-Status "Ende: $($endTime.ToString('dd.MM.yyyy HH:mm:ss'))"
