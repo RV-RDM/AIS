@@ -1507,37 +1507,46 @@ if ($script:SelectedTaskIds -contains "defender-exclusions") {
 
 Write-Section "WINDOWS DEFENDER AUSNAHMEN"
 
+$required = @(
+    "ALBIS.exe",
+    "ALBISCS.exe"
+)
+$defenderQuerySucceeded = $false
 try {
-    $defender = Get-MpPreference
-
-    $required = @(
-        "ALBIS.exe",
-        "ALBISCS.exe"
-    )
-    foreach ($exe in $required) {
-        $found = @(
-            $defender.ExclusionProcess |
-            Where-Object {
-                [System.IO.Path]::GetFileName($_) -ieq $exe
-            }
-        ).Count -gt 0
-
-        if ($found) {
-            Write-Status (
-                "Defender-Prozessausnahme vorhanden: $exe"
-            ) "OK"
-        }
-        else {
-            Write-Status (
-                "Defender-Prozessausnahme FEHLT: $exe"
-            ) "ERROR"
-        }
-    }
+    $defender = Get-MpPreference -ErrorAction Stop
+    $defenderQuerySucceeded = $true
 }
 catch {
     Write-Status (
-        "Defender-Einstellungen konnten nicht gelesen werden: $_"
-    ) "ERROR"
+        "Defender-Einstellungen konnten nicht gelesen werden; Ausnahmen sind nicht verifizierbar."
+    ) "WARN"
+}
+
+foreach ($exe in $required) {
+    if (!$defenderQuerySucceeded) {
+        Write-Status (
+            "Defender-Prozessausnahme nicht verifizierbar: $exe"
+        ) "WARN"
+        continue
+    }
+
+    $found = @(
+        $defender.ExclusionProcess |
+        Where-Object {
+            [System.IO.Path]::GetFileName($_) -ieq $exe
+        }
+    ).Count -gt 0
+
+    if ($found) {
+        Write-Status (
+            "Defender-Prozessausnahme vorhanden: $exe"
+        ) "OK"
+    }
+    else {
+        Write-Status (
+            "Defender-Prozessausnahme FEHLT: $exe"
+        ) "ERROR"
+    }
 }
 }
 
