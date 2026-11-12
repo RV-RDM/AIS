@@ -2383,18 +2383,19 @@ catch {
 }
 
 # ============================================================
-# EVENT CHECK (EVENT-IDs 50, 51, 55, 7, 11, last 10 D)
+# EVENT CHECK (IDs 50, 51, 55, 7, 11; Critical/Error/Warning; last 10 days)
 
 if ($script:SelectedTaskIds -contains "event-log") {
-Write-Section "EREIGNISANZEIGE (EREIGNIS-IDs 50, 51, 55, 7, 11)"
+Write-Section "EREIGNISANZEIGE (IDs 50, 51, 55, 7, 11; Kritisch, Fehler, Warnung)"
 
 try {
     $startDateCheck = (Get-Date).AddDays(-10)
     
-    # Abfrage der ausgewaehlten Ereignis-IDs im System-Log der letzten 10 Tage
+    # Abfrage der ausgewaehlten IDs und der Level Kritisch (1), Fehler (2) und Warnung (3)
     $eventFilter = @{
         LogName   = 'System'
         ID        = @(50, 51, 55, 7, 11)
+        Level     = @(1, 2, 3)
         StartTime = $startDateCheck
     }
 
@@ -2402,7 +2403,7 @@ try {
 
     if ($events) {
         $eventCount = @($events).Count
-        Write-Status "Achtung: Es wurden $eventCount Ereignisse mit den Ereignis-IDs 50, 51, 55, 7 und 11 in den letzten 10 Tagen gefunden!" "WARN"
+        Write-Status "Achtung: Es wurden $eventCount kritische, fehlerhafte oder warnende Ereignisse mit den IDs 50, 51, 55, 7 und 11 in den letzten 10 Tagen gefunden!" "WARN"
 
         foreach ($evt in $events) {
             # Kurzausgabe fuer das Protokoll (auf eine Zeile reduziert)
@@ -2415,7 +2416,7 @@ try {
         }
     }
     else {
-        Write-Status "Keine Ereignisse mit den Ereignis-IDs 50, 51, 55, 7 und 11 in den letzten 10 Tagen gefunden." "OK"
+        Write-Status "Keine kritischen, fehlerhaften oder warnenden Ereignisse mit den IDs 50, 51, 55, 7 und 11 in den letzten 10 Tagen gefunden." "OK"
     }
 }
 catch {
