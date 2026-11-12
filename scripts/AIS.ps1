@@ -84,6 +84,239 @@ function Write-Section {
     Add-Content -Path $script:LogFile `
         -Value $line -Encoding UTF8
 }
+function Get-EligibleWindowsUpdates {
+    param([object[]]$Updates)
+
+    $allowedClassificationIds = @(
+        "0FA1201D-4330-4FA8-8AE9-B877473B6441" # Security Updates
+        "E6CF1350-C01B-414D-A61F-263D14D133B4" # Critical Updates
+        "CD5FFD1E-E932-4E3A-BF74-18BF0B1BBD83" # Updates
+        "28BC880E-0592-4CBF-8F95-C79B17911D5F" # Update Rollups
+    )
+    $excludedClassificationIds = @(
+        "EBFC1FC5-71A4-4F7B-9ACA-3B9A503104A0" # Drivers
+        "B54E7D24-7ADD-428F-8B75-90A396FA584F" # Feature Packs
+        "3689BDC8-B205-4AF4-8D4A-A63924C5E9D5" # Upgrades
+    )
+    $excludedTitlePattern = '(?i)\b(preview|insider|driver|upgrade|feature\s+update|feature\s+pack|enablement\s+package)\b|\bWindows\s+11,\s*version\s+\d{2}H\d\b'
+    $eligibleUpdates = New-Object 'System.Collections.Generic.List[object]'
+
+    foreach ($update in $Updates) {
+        if (
+            $null -eq $update -or
+            [bool]$update.IsBeta -or
+            ([string]$update.Title -match $excludedTitlePattern)
+        ) {
+            continue
+        }
+
+        $hasAllowedClassification = $false
+        $hasExcludedClassification = $false
+        foreach ($category in $update.Categories) {
+            $categoryId = ([string]$category.CategoryID).Trim("{}")
+            if ($excludedClassificationIds -contains $categoryId) {
+                $hasExcludedClassification = $true
+                break
+            }
+            if ($allowedClassificationIds -contains $categoryId) {
+                $hasAllowedClassification = $true
+            }
+        }
+
+        if ($hasAllowedClassification -and -not $hasExcludedClassification) {
+            [void]$eligibleUpdates.Add($update)
+        }
+    }
+
+    return $eligibleUpdates.ToArray()
+}
+function Invoke-AutomaticWindowsUpdate {
+    Write-Section "WINDOWS UPDATE"
+    Write-Status (
+        "Auswahl: Security Updates, Critical Updates, Updates und Update Rollups; keine Treiber-, Vorschau- oder Funktionsupdates."
+    )
+
+    $searchCriteria = "IsInstalled=0 and IsHidden=0 and Type='Software' and BrowseOnly=0"
+    try {
+        $session = New-Object -ComObject Microsoft.Update.Session -ErrorAction Stop
+        $searcher = $session.CreateUpdateSearcher()
+        $searchResult = $searcher.Search($searchCriteria)
+    }
+    catch {
+        Write-Status (
+            "Windows-Update-Suche fehlgeschlagen: $($_.Exception.Message)"
+        ) "ERROR"
+        return
+    }
+
+    try {
+        $availableUpdates = @()
+        for ($index = 0; $index -lt $searchResult.Updates.Count; $index++) {
+            $availableUpdates += $searchResult.Updates.Item($index)
+        }
+    }
+    catch {
+        Write-Status (
+            "Windows-Update-Suchergebnisse konnten nicht gelesen werden: $($_.Exception.Message)"
+        ) "ERROR"
+        return
+    }
+
+    $eligibleUpdates = @(
+        Get-EligibleWindowsUpdates -Updates $availableUpdates
+    )
+    if ($eligibleUpdates.Count -eq 0) {
+        Write-Status "Keine passenden Sicherheits- oder Qualitaetsupdates gefunden." "OK"
+        return
+    }
+
+    Write-Status "$($eligibleUpdates.Count) passende Windows-Update(s) gefunden."
+    foreach ($update in $eligibleUpdates) {
+        Write-Status "Ausgewaehlt: $($update.Title)"
+    }
+
+    try {
+        $updatesToDownload = New-Object -ComObject Microsoft.Update.UpdateColl `
+            -ErrorAction Stop
+    }
+    catch {
+        Write-Status (
+            "Windows-Update-Download konnte nicht vorbereitet werden: $($_.Exception.Message)"
+        ) "ERROR"
+        return
+    }
+
+    foreach ($update in $eligibleUpdates) {
+        try {
+            if (-not $update.EulaAccepted) {
+                $update.AcceptEula()
+            }
+            [void]$updatesToDownload.Add($update)
+        }
+        catch {
+            Write-Status (
+                "Update konnte nicht fuer den Download vorbereitet werden: $($update.Title) - $($_.Exception.Message)"
+            ) "ERROR"
+        }
+    }
+
+    if ($updatesToDownload.Count -eq 0) {
+        Write-Status "Kein Update konnte fuer den Download vorbereitet werden." "ERROR"
+        return
+    }
+
+    try {
+        $downloader = $session.CreateUpdateDownloader()
+        $downloader.Updates = $updatesToDownload
+        $downloadResult = $downloader.Download()
+    }
+    catch {
+        Write-Status (
+            "Windows-Update-Download fehlgeschlagen: $($_.Exception.Message)"
+        ) "ERROR"
+        return
+    }
+
+    try {
+        $updatesToInstall = New-Object -ComObject Microsoft.Update.UpdateColl `
+            -ErrorAction Stop
+    }
+    catch {
+        Write-Status (
+            "Windows-Update-Installation konnte nach dem Download nicht vorbereitet werden: $($_.Exception.Message)"
+        ) "ERROR"
+        return
+    }
+
+    for ($index = 0; $index -lt $updatesToDownload.Count; $index++) {
+        $update = $updatesToDownload.Item($index)
+        try {
+            $updateResult = $downloadResult.GetUpdateResult($index)
+        }
+        catch {
+            Write-Status (
+                "Download-Ergebnis konnte nicht gelesen werden: $($update.Title) - $($_.Exception.Message)"
+            ) "ERROR"
+            continue
+        }
+
+        if ([int]$updateResult.ResultCode -eq 2) {
+            [void]$updatesToInstall.Add($update)
+            Write-Status "Download erfolgreich: $($update.Title)" "OK"
+        }
+        else {
+            Write-Status (
+                "Download fehlgeschlagen (Ergebnis $($updateResult.ResultCode), HRESULT $($updateResult.HResult)): $($update.Title)"
+            ) "ERROR"
+        }
+    }
+
+    if ($updatesToInstall.Count -eq 0) {
+        Write-Status "Kein Update wurde erfolgreich heruntergeladen; Installation uebersprungen." "ERROR"
+        return
+    }
+
+    try {
+        $installer = $session.CreateUpdateInstaller()
+        $installer.ForceQuiet = $true
+        $installer.AllowSourcePrompts = $false
+        $installer.Updates = $updatesToInstall
+        $installationResult = $installer.Install()
+    }
+    catch {
+        Write-Status (
+            "Windows-Update-Installation fehlgeschlagen: $($_.Exception.Message)"
+        ) "ERROR"
+        Write-Status "Ein Neustart wurde nicht gestartet; der Neustartstatus konnte nicht ermittelt werden." "WARN"
+        return
+    }
+
+    for ($index = 0; $index -lt $updatesToInstall.Count; $index++) {
+        $update = $updatesToInstall.Item($index)
+        try {
+            $updateResult = $installationResult.GetUpdateResult($index)
+            if ([int]$updateResult.ResultCode -eq 2) {
+                Write-Status (
+                    "Update installiert: $($update.Title) (HRESULT $($updateResult.HResult))"
+                ) "OK"
+            }
+            elseif ([int]$updateResult.ResultCode -eq 3) {
+                Write-Status (
+                    "Update mit Fehlern installiert (HRESULT $($updateResult.HResult)): $($update.Title)"
+                ) "WARN"
+            }
+            else {
+                Write-Status (
+                    "Update-Installation nicht erfolgreich (Ergebnis $($updateResult.ResultCode), HRESULT $($updateResult.HResult)): $($update.Title)"
+                ) "ERROR"
+            }
+        }
+        catch {
+            Write-Status (
+                "Installationsergebnis konnte nicht gelesen werden: $($update.Title) - $($_.Exception.Message)"
+            ) "ERROR"
+        }
+    }
+
+    try {
+        $rebootRequired = [bool]$installationResult.RebootRequired
+    }
+    catch {
+        Write-Status (
+            "Neustartstatus konnte nicht ermittelt werden: $($_.Exception.Message). Es wird nicht automatisch neu gestartet."
+        ) "WARN"
+        return
+    }
+
+    if ($rebootRequired) {
+        Write-Status "Windows meldet, dass ein Neustart erforderlich ist. Es wird nicht automatisch neu gestartet." "WARN"
+    }
+    else {
+        Write-Status "Kein Neustart erforderlich." "OK"
+    }
+}
+Invoke-AutomaticWindowsUpdate
+
 function Confirm-Critical {
     param([string]$Message)
     Write-Host ""
@@ -2534,7 +2767,20 @@ function Clean-TempFolder {
         [string]$Path
     )
 
-    if (!(Test-Path -LiteralPath $Path -PathType Container)) {
+    try {
+        $folderExists = Test-Path `
+            -LiteralPath $Path `
+            -PathType Container `
+            -ErrorAction Stop
+    }
+    catch {
+        Write-Status (
+            "Temp-Ordner konnte nicht geprueft werden: $Path - $_"
+        ) "ERROR"
+        return
+    }
+
+    if (!$folderExists) {
 
         Write-Status (
             "Temp-Ordner nicht vorhanden oder nicht zugaenglich: $Path"
@@ -2608,13 +2854,94 @@ function Clean-TempFolder {
     }
 }
 
-# Benutzer-Temp
+function Get-TempFolderPaths {
 
-Clean-TempFolder -Path $env:TEMP
+    param(
+        [string]$CurrentTemp,
+        [string]$CurrentTmp,
+        [string]$SystemRoot,
+        [object[]]$Profiles
+    )
 
-# Globaler Windows-Temp
+    $tempPaths = New-Object 'System.Collections.Generic.List[string]'
+    $seenPaths = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $addPath = {
+        param([string]$Path)
 
-Clean-TempFolder -Path "$env:SystemRoot\Temp"
+        if ([string]::IsNullOrWhiteSpace($Path)) {
+            return
+        }
+
+        $normalizedPath = $Path.Trim().TrimEnd([char[]]@('\','/'))
+        if ([string]::IsNullOrWhiteSpace($normalizedPath)) {
+            $normalizedPath = $Path
+        }
+
+        if (-not $seenPaths.Contains($normalizedPath)) {
+            [void]$seenPaths.Add($normalizedPath)
+            $tempPaths.Add($normalizedPath)
+        }
+    }
+
+    & $addPath $CurrentTemp
+    & $addPath $CurrentTmp
+    & $addPath (Join-Path $SystemRoot "Temp")
+
+    foreach ($userProfile in $Profiles) {
+        if (-not [string]::IsNullOrWhiteSpace($userProfile.LocalPath)) {
+            & $addPath (
+                Join-Path $userProfile.LocalPath "AppData\Local\Temp"
+            )
+        }
+    }
+
+    $optionalTempPaths = @(
+        (Join-Path $SystemRoot "SystemTemp")
+        (Join-Path $SystemRoot "System32\config\systemprofile\AppData\Local\Temp")
+        (Join-Path $SystemRoot "ServiceProfiles\LocalService\AppData\Local\Temp")
+        (Join-Path $SystemRoot "ServiceProfiles\NetworkService\AppData\Local\Temp")
+    )
+
+    foreach ($path in $optionalTempPaths) {
+        try {
+            if (Test-Path -LiteralPath $path -PathType Container -ErrorAction Stop) {
+                & $addPath $path
+            }
+        }
+        catch {
+            Write-Status (
+                "Temp-Ordner konnte nicht geprueft werden: $path - $_"
+            ) "WARN"
+            & $addPath $path
+        }
+    }
+
+    return $tempPaths.ToArray()
+}
+
+$userProfiles = @()
+try {
+    $userProfiles = @(
+        Get-CimInstance -ClassName Win32_UserProfile -ErrorAction Stop
+    )
+}
+catch {
+    Write-Status (
+        "Benutzerprofile konnten nicht ermittelt werden; bekannte Temp-Ordner werden trotzdem bereinigt - $_"
+    ) "ERROR"
+}
+
+$tempFolderPaths = Get-TempFolderPaths `
+    -CurrentTemp $env:TEMP `
+    -CurrentTmp $env:TMP `
+    -SystemRoot $env:SystemRoot `
+    -Profiles $userProfiles
+
+foreach ($tempFolderPath in $tempFolderPaths) {
+    Clean-TempFolder -Path $tempFolderPath
+}
 }
 
 # ============================================================
