@@ -148,6 +148,7 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "windows-version"; Title = "Windows-Version pruefen" }
     [pscustomobject]@{ Id = "memory"; Title = "Arbeitsspeicher pruefen" }
     [pscustomobject]@{ Id = "disk-space"; Title = "Freien Speicherplatz pruefen" }
+    [pscustomobject]@{ Id = "bitlocker"; Title = "BitLocker-Status und Recovery-Key anzeigen" }
     [pscustomobject]@{ Id = "hosts-file"; Title = "Hosts-Datei pruefen" }
     [pscustomobject]@{ Id = "notepad-settings"; Title = "Notepad-Einstellungen importieren" }
     [pscustomobject]@{ Id = "time-sync"; Title = "Datum und Uhrzeit synchronisieren" }
@@ -852,6 +853,109 @@ foreach ($disk in $disks) {
         Write-Status (
             "$($disk.DeviceID): Nur $freeGB GB frei von $totalGB GB"
         ) "ERROR"
+    }
+}
+}
+
+# ============================================================
+# BITLOCKER-STATUS UND RECOVERY-KEY
+
+if ($script:SelectedTaskIds -contains "bitlocker") {
+
+Write-Section "BITLOCKER-STATUS"
+
+$bitLockerCommand = Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue
+if (-not $bitLockerCommand) {
+    try {
+        Import-Module BitLocker -ErrorAction Stop
+        $bitLockerCommand = Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue
+    }
+    catch {
+        $bitLockerCommand = $null
+    }
+}
+
+if (-not $bitLockerCommand) {
+    Write-Status "BitLocker kann nicht geprueft werden: BitLocker-Modul oder Cmdlet nicht verfuegbar" "WARN"
+}
+else {
+    try {
+        $bitLockerVolumes = @(Get-BitLockerVolume -ErrorAction Stop)
+        $encryptedVolumes = @(
+            $bitLockerVolumes | Where-Object {
+                ([string]$_.VolumeStatus) -in @(
+                    "FullyEncrypted",
+                    "EncryptionInProgress",
+                    "EncryptionPaused",
+                    "DecryptionInProgress",
+                    "DecryptionPaused"
+                )
+            }
+        )
+
+        if ($encryptedVolumes.Count -eq 0) {
+            Write-Status "BitLocker ist auf keinem Laufwerk aktiv" "OK"
+        }
+        else {
+            foreach ($volume in $encryptedVolumes) {
+                if ([string]$volume.ProtectionStatus -ne "On") {
+                    Write-Status (
+                        "BitLocker auf $($volume.MountPoint): Verschluesselung vorhanden, Schutz ist nicht aktiv"
+                    ) "WARN"
+                    continue
+                }
+
+                Write-Status "BitLocker auf $($volume.MountPoint) ist aktiv" "OK"
+                $recoveryProtectors = @(
+                    $volume.KeyProtector | Where-Object {
+                        [string]$_.KeyProtectorType -eq "RecoveryPassword" -and
+                        -not [string]::IsNullOrWhiteSpace($_.RecoveryPassword)
+                    }
+                )
+
+                if ($recoveryProtectors.Count -eq 0) {
+                    Write-Status (
+                        "Kein Recovery-Passwort-Protector auf $($volume.MountPoint) gefunden"
+                    ) "WARN"
+                    continue
+                }
+
+                if (-not [Environment]::UserInteractive -or -not $Host -or -not $Host.UI -or -not $Host.UI.RawUI) {
+                    Write-Status "Recovery-Keys werden nur nach Bestaetigung in einer interaktiven Konsole angezeigt" "WARN"
+                    continue
+                }
+
+                foreach ($protector in $recoveryProtectors) {
+                    Write-Host ""
+                    Write-Host (
+                        "Der Recovery-Key fuer $($volume.MountPoint) ist ein sensibles Geheimnis."
+                    ) -ForegroundColor Yellow
+                    Write-Host "Er wird nicht in die Protokolldatei geschrieben." -ForegroundColor Yellow
+                    $showRecoveryKey = Read-Host "Recovery-Key jetzt in der Konsole anzeigen? (J/N)"
+
+                    if ($showRecoveryKey -match "^(J|JA|Y|YES)$") {
+                        $recoveryKey = $protector.RecoveryPassword
+                        Write-Host "Recovery-Key fuer $($volume.MountPoint):" -ForegroundColor Red
+                        Write-Host $recoveryKey -ForegroundColor Red
+                        $recoveryKey = $null
+                    }
+                    else {
+                        Write-Host "Recovery-Key wurde nicht angezeigt." -ForegroundColor Cyan
+                    }
+                }
+            }
+        }
+    }
+    catch {
+        Write-Status "BitLocker-Status konnte nicht gelesen werden; Details wurden aus Sicherheitsgruenden nicht protokolliert" "ERROR"
+    }
+    finally {
+        $bitLockerVolumes = $null
+        $encryptedVolumes = $null
+        $recoveryProtectors = $null
+        $volume = $null
+        $protector = $null
+        $recoveryKey = $null
     }
 }
 }
