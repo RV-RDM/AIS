@@ -174,6 +174,9 @@ $script:AISTasks = @(
 )
 
 $script:AISTaskChoices = @{}
+$script:ExitRequested = $false
+
+while ($true) {
 Write-Host ""
 Write-Host "AIS SYSTEMCHECK - AUFGABE AUSWAEHLEN" -ForegroundColor Cyan
 Write-Host "0  - Alle Aufgaben ausfuehren"
@@ -203,11 +206,15 @@ while ($true) {
     }
 
     if ($selection -match "^(Q|QUIT)$") {
-        Write-Host "AIS SYSTEMCHECK abgebrochen." -ForegroundColor Yellow
-        return
+        $script:ExitRequested = $true
+        break
     }
 
     Write-Host "Ungueltige Auswahl. Bitte eine Nummer, 0 oder Q eingeben." -ForegroundColor Yellow
+}
+
+if ($script:ExitRequested) {
+    break
 }
 
 # ============================================================
@@ -2463,12 +2470,12 @@ catch {
 # ============================================================
 # ABSCHLUSSAUSWERTUNG
 
-Write-Section "ALBIS SYSTEMCHECK - ABSCHLUSS"
+Write-Section "AUSGEWAEHLTE AUFGABE ABGESCHLOSSEN"
 
 $endTime = Get-Date
 
 if ($script:SelectedTaskIds.Count -eq $script:AISTasks.Count) {
-    Write-Status "Systemcheck abgeschlossen"
+    Write-Status "Alle ausgewaehlten Aufgaben abgeschlossen: $script:SelectionDescription"
 }
 else {
     Write-Status "Ausgewaehlte Aufgabe(n) abgeschlossen: $script:SelectionDescription"
@@ -2484,8 +2491,16 @@ if ($script:SelectedTaskIds -contains "windows-version") {
 Write-Status "Beginn: $($startDate.ToString('dd.MM.yyyy HH:mm:ss'))"
 Write-Status "Ende: $($endTime.ToString('dd.MM.yyyy HH:mm:ss'))"
 
+continue
+}
+
 # ============================================================
-# GESAMTERGEBNIS
+# GESAMTERGEBNIS UND PRUEFBERICHT
+
+Write-Section "ALBIS SYSTEMCHECK - ABSCHLUSS"
+Write-Status "Systemcheck beendet: Auswahl Q"
+Write-Status "Beginn: $($startDate.ToString('dd.MM.yyyy HH:mm:ss'))"
+Write-Status "Ende: $(Get-Date -Format 'dd.MM.yyyy HH:mm:ss')"
 
 Write-Section "GESAMTERGEBNIS"
 
@@ -2495,26 +2510,14 @@ Write-Status "Fehler: $script:Errors"
 Write-Status "Durchgefuehrte Aenderungen: $script:Changes"
 
 if ($script:Errors -gt 0) {
-
-    Write-Status (
-        "SYSTEMCHECK MIT KRITISCHEN FEHLERN ABGESCHLOSSEN"
-    ) "ERROR"
+    Write-Status "SYSTEMCHECK MIT KRITISCHEN FEHLERN ABGESCHLOSSEN" "ERROR"
 }
 elseif ($script:Warnings -gt 0) {
-
-    Write-Status (
-        "SYSTEMCHECK MIT WARNUNGEN ABGESCHLOSSEN"
-    ) "WARN"
+    Write-Status "SYSTEMCHECK MIT WARNUNGEN ABGESCHLOSSEN" "WARN"
 }
 else {
-
-    Write-Status (
-        "SYSTEMCHECK OHNE FESTGESTELLTE FEHLER ABGESCHLOSSEN"
-    ) "OK"
+    Write-Status "SYSTEMCHECK OHNE FESTGESTELLTE FEHLER ABGESCHLOSSEN" "OK"
 }
-
-# ============================================================
-# PRUEFBERICHT ABSCHLIESSEN
 
 Write-Section "PRUEFBERICHT"
 
@@ -2522,7 +2525,6 @@ Add-Content -Path $script:LogFile -Value ""
 Add-Content -Path $script:LogFile -Value "==============================================="
 Add-Content -Path $script:LogFile -Value "AIS SYSTEMCHECK - ENDBERICHT"
 Add-Content -Path $script:LogFile -Value "==============================================="
-
 Add-Content -Path $script:LogFile -Value "Computer: $env:COMPUTERNAME"
 Add-Content -Path $script:LogFile -Value "Benutzer: $env:USERNAME"
 Add-Content -Path $script:LogFile -Value "Datum: $(Get-Date)"
@@ -2536,26 +2538,18 @@ Add-Content -Path $script:LogFile -Value "Pruefbericht: $script:LogFile"
 Add-Content -Path $script:LogFile -Value "==============================================="
 
 Write-Host ""
-
 Write-Host "Erfolgreich: $script:Success" -ForegroundColor Green
 Write-Host "Warnungen:   $script:Warnings" -ForegroundColor Yellow
 Write-Host "Fehler:      $script:Errors" -ForegroundColor Red
 Write-Host "Aenderungen: $script:Changes" -ForegroundColor Cyan
-
 Write-Host ""
 Write-Host "Pruefbericht gespeichert unter:" -ForegroundColor Cyan
 Write-Host $script:LogFile -ForegroundColor White
-
 Write-Host ""
 
-# Bericht im Editor oeffnen?
-
 if (Confirm-Critical "Pruefbericht jetzt mit Editor oeffnen?") {
-
     Start-Process notepad.exe -ArgumentList "`"$script:LogFile`""
 }
 
 Write-Host ""
 Write-Host "AIS SYSTEMCHECK abgeschlossen." -ForegroundColor Green
-
-# ENDE DES GESAMTEN SCRIPTS

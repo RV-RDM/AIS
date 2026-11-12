@@ -3,4 +3,4 @@ Check System for AIS
 
 [AIS-Systemcheck herunterladen](https://raw.githubusercontent.com/RV-RDM/AIS/main/scripts/AIS.ps1)
 
-Beim Start kann eine einzelne Aufgabe oder „Alle Aufgaben ausfuehren“ ausgewaehlt werden.
+Nach jeder einzelnen Aufgabe und nach „Alle Aufgaben ausfuehren“ kehrt das Skript zur Auswahl zurueck. Erst mit „Q“ wird der Gesamtbericht abgeschlossen und das Oeffnen im Editor angeboten.
