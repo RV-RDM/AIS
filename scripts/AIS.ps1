@@ -284,11 +284,6 @@ foreach ($installInfo in $script:AlbisInstallInfos) {
 Write-Status "ALBIS-Startpfade wurden angezeigt; local.ini-Inhalte werden nicht protokolliert." "INFO"
 
 $script:AISTasks = @(
-    [pscustomobject]@{ Id = "system-restore"; Title = "Systemwiederherstellung" }
-    [pscustomobject]@{ Id = "registry-backup"; Title = "ALBIS-Registry-Sicherung" }
-    [pscustomobject]@{ Id = "albis-backup"; Title = "ALBIS-Dateien als ZIP sichern" }
-    [pscustomobject]@{ Id = "smb"; Title = "SMB-Konfiguration und Verbindungen" }
-    [pscustomobject]@{ Id = "tcp"; Title = "TCP-Konfiguration und Verbindungen" }
     [pscustomobject]@{
         Id      = "startup-checks"
         Title   = "Automatische Startpruefungen (System und Netzwerk)"
@@ -302,6 +297,11 @@ $script:AISTasks = @(
             "ipv4-routes"
         )
     }
+    [pscustomobject]@{ Id = "system-restore"; Title = "Systemwiederherstellung" }
+    [pscustomobject]@{ Id = "registry-backup"; Title = "ALBIS-Registry-Sicherung" }
+    [pscustomobject]@{ Id = "albis-backup"; Title = "ALBIS-Dateien als ZIP sichern" }
+    [pscustomobject]@{ Id = "smb"; Title = "SMB-Konfiguration und Verbindungen" }
+    [pscustomobject]@{ Id = "tcp"; Title = "TCP-Konfiguration und Verbindungen" }
     [pscustomobject]@{ Id = "bitlocker"; Title = "BitLocker-Status und Recovery-Key anzeigen" }
     [pscustomobject]@{ Id = "notepad-settings"; Title = "Notepad-Einstellungen importieren" }
     [pscustomobject]@{ Id = "ipv6-qos"; Title = "IPv6 und QoS-Paketplaner pruefen/aendern" }
@@ -321,6 +321,7 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner pruefen/bereinigen" }
     [pscustomobject]@{ Id = "event-log"; Title = "Systemereignisse pruefen" }
     [pscustomobject]@{ Id = "dns-cache"; Title = "DNS-Cache leeren" }
+    [pscustomobject]@{ Id = "rustdesk-check"; Title = "RustDesk-Installation pruefen" }
 )
 
 $script:AllTaskIds = @(
@@ -1054,6 +1055,71 @@ else {
         "Windows 11 wird nicht erkannt! " +
         "Installierte Version: $displayVersion, Build $build.$ubr"
     ) "ERROR"
+}
+}
+
+# ============================================================
+# RUSTDESK INSTALLATION pruefen
+
+if ($script:SelectedTaskIds -contains "rustdesk-check") {
+Write-Section "RUSTDESK INSTALLATION"
+
+$rustDeskDownloadUrl = "https://rustdesk.com/download/"
+$rustDeskExePaths = @(
+    Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "RustDesk\RustDesk.exe"
+    Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "RustDesk\RustDesk.exe"
+    Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Programs\RustDesk\RustDesk.exe"
+)
+$rustDeskExe = $rustDeskExePaths |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Leaf) } |
+    Select-Object -First 1
+
+$rustDeskRegistryLocations = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+)
+$rustDeskRegistryEntries = @()
+$rustDeskRegistryCheckFailed = $false
+foreach ($registryLocation in $rustDeskRegistryLocations) {
+    try {
+        if (Test-Path -LiteralPath $registryLocation -ErrorAction Stop) {
+            $rustDeskRegistryEntries += Get-ChildItem `
+                -LiteralPath $registryLocation `
+                -ErrorAction Stop |
+                ForEach-Object {
+                    Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction Stop
+                }
+        }
+    }
+    catch {
+        $rustDeskRegistryCheckFailed = $true
+        Write-Status (
+            "RustDesk-Registry konnte nicht vollstaendig geprueft werden: $_"
+        ) "ERROR"
+    }
+}
+$rustDeskEntry = $rustDeskRegistryEntries |
+    Where-Object { $_.DisplayName -match '^RustDesk(?:\s|$)' } |
+    Select-Object -First 1
+
+if ($rustDeskExe) {
+    Write-Status "RustDesk ist installiert: $rustDeskExe" "OK"
+}
+elseif ($rustDeskEntry) {
+    Write-Status "RustDesk ist installiert: $($rustDeskEntry.DisplayName)" "OK"
+}
+elseif ($rustDeskRegistryCheckFailed) {
+    Write-Status "RustDesk-Installation konnte nicht sicher festgestellt werden." "ERROR"
+}
+else {
+    Write-Status "RustDesk wurde nicht gefunden. Offizielle Download-Seite: $rustDeskDownloadUrl" "WARN"
+    try {
+        Start-Process -FilePath $rustDeskDownloadUrl -ErrorAction Stop
+    }
+    catch {
+        Write-Status "Offizielle Download-Seite konnte nicht geoeffnet werden: $_" "ERROR"
+    }
 }
 }
 
