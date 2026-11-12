@@ -84,6 +84,54 @@ function Write-Section {
     Add-Content -Path $script:LogFile `
         -Value $line -Encoding UTF8
 }
+function Set-RegistryValue {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [object]$Value,
+        [Microsoft.Win32.RegistryValueKind]$Type =
+            [Microsoft.Win32.RegistryValueKind]::DWord
+    )
+    if (!(Test-Path -LiteralPath $Path -ErrorAction Stop)) {
+        New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
+    }
+    New-ItemProperty -Path $Path `
+        -Name $Name `
+        -Value $Value `
+        -PropertyType $Type `
+        -Force `
+        -ErrorAction Stop | Out-Null
+}
+function Set-KnownFileExtensionsVisible {
+    try {
+        $path = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+        Set-RegistryValue `
+            -Path $path `
+            -Name "HideFileExt" `
+            -Value 0 `
+            -Type ([Microsoft.Win32.RegistryValueKind]::DWord)
+
+        $setting = Get-ItemProperty `
+            -LiteralPath $path `
+            -Name "HideFileExt" `
+            -ErrorAction Stop
+        if ([int]$setting.HideFileExt -ne 0) {
+            throw "HideFileExt hat nach dem Setzen nicht den Wert 0."
+        }
+
+        Write-Status (
+            "Dateinamenerweiterungen fuer bekannte Dateitypen werden angezeigt."
+        ) "OK"
+    }
+    catch {
+        Write-Status (
+            "Einstellung fuer Dateinamenerweiterungen fehlgeschlagen: " +
+            "$($_.Exception.Message)"
+        ) "ERROR"
+    }
+}
+Set-KnownFileExtensionsVisible
+
 function Get-EligibleWindowsUpdates {
     param([object[]]$Updates)
 
@@ -355,24 +403,6 @@ function Invoke-Critical {
         Write-Status "$Description - abgelehnt" "WARN"
     }
 }
-function Set-RegistryValue {
-    param(
-        [string]$Path,
-        [string]$Name,
-        [object]$Value,
-        [Microsoft.Win32.RegistryValueKind]$Type =
-            [Microsoft.Win32.RegistryValueKind]::DWord
-    )
-    if (!(Test-Path $Path)) {
-        New-Item -Path $Path -Force | Out-Null
-    }
-    New-ItemProperty -Path $Path `
-        -Name $Name `
-        -Value $Value `
-        -PropertyType $Type `
-        -Force | Out-Null
-}
-
 function Get-AlbisInstallInfo {
     param([object[]]$Installations)
 
