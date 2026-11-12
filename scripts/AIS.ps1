@@ -140,19 +140,170 @@ function Set-RegistryValue {
         -Force | Out-Null
 }
 
+function Get-AlbisInstallInfo {
+    param([object[]]$Installations)
+
+    foreach ($installation in $Installations) {
+        $localIniPath = Join-Path $installation.Path "local.ini"
+        $localIniExists = Test-Path -LiteralPath $localIniPath -PathType Leaf
+        $mainPath = $null
+        $mainPathValid = $false
+        $serverIniPath = $null
+        $serverIniExists = $false
+        $readError = $null
+
+        if ($localIniExists) {
+            try {
+                $mainLine = Get-Content -LiteralPath $localIniPath -ErrorAction Stop |
+                    Where-Object { $_ -match '^\s*Main\s*=' } |
+                    Select-Object -First 1
+
+                if ($mainLine -match '^\s*Main\s*=\s*(.*?)\s*$') {
+                    $mainPath = $Matches[1].Trim().Trim('"').Trim("'")
+                }
+            }
+            catch {
+                $readError = $_.Exception.Message
+            }
+
+            if (
+                -not [string]::IsNullOrWhiteSpace($mainPath) -and
+                [System.IO.Path]::IsPathRooted($mainPath)
+            ) {
+                try {
+                    $mainPathValid = Test-Path `
+                        -LiteralPath $mainPath `
+                        -PathType Container
+                    if ($mainPathValid) {
+                        $serverIniPath = Join-Path $mainPath "albisglb.ini"
+                        $serverIniExists = Test-Path `
+                            -LiteralPath $serverIniPath `
+                            -PathType Leaf
+                    }
+                }
+                catch {
+                    $mainPathValid = $false
+                }
+            }
+        }
+
+        [pscustomobject]@{
+            InstallPath     = $installation.Path
+            ArchivePrefix   = $installation.ArchivePrefix
+            LocalIniPath    = $localIniPath
+            LocalIniExists  = $localIniExists
+            MainPath        = $mainPath
+            MainPathValid   = $mainPathValid
+            ServerIniPath   = $serverIniPath
+            ServerIniExists = $serverIniExists
+            ReadError       = $readError
+        }
+    }
+}
+
+function Get-AlbisBackupEntries {
+    param([object[]]$InstallInfos)
+
+    $entries = @()
+    $entryNames = @{}
+
+    foreach ($installInfo in $InstallInfos) {
+        if ($installInfo.LocalIniExists) {
+            $entryName = "$($installInfo.ArchivePrefix)/local.ini"
+            if ($entryNames.ContainsKey($entryName)) {
+                throw "Doppelter ZIP-Eintragsname: $entryName"
+            }
+            $entryNames[$entryName] = $true
+            $entries += [pscustomobject]@{
+                SourcePath = $installInfo.LocalIniPath
+                EntryName  = $entryName
+            }
+        }
+
+        if ($installInfo.ServerIniExists) {
+            $entryName = "$($installInfo.ArchivePrefix)/albisglb.ini"
+            if ($entryNames.ContainsKey($entryName)) {
+                throw "Doppelter ZIP-Eintragsname: $entryName"
+            }
+            $entryNames[$entryName] = $true
+            $entries += [pscustomobject]@{
+                SourcePath = $installInfo.ServerIniPath
+                EntryName  = $entryName
+            }
+        }
+    }
+
+    return $entries
+}
+
+$script:AlbisInstallations = @(
+    [pscustomobject]@{
+        Path          = "C:\CGM\albiswin"
+        ArchivePrefix = "C/CGM/albiswin"
+    }
+    [pscustomobject]@{
+        Path          = "C:\albiswin"
+        ArchivePrefix = "C/albiswin"
+    }
+)
+$script:AlbisInstallInfos = @(
+    Get-AlbisInstallInfo -Installations $script:AlbisInstallations
+)
+
+Write-Host "ALBIS-Installationen beim Start:" -ForegroundColor Cyan
+foreach ($installInfo in $script:AlbisInstallInfos) {
+    if (-not $installInfo.LocalIniExists) {
+        Write-Host "local.ini nicht gefunden: $($installInfo.LocalIniPath)" `
+            -ForegroundColor Yellow
+        continue
+    }
+
+    Write-Host "local.ini: $($installInfo.LocalIniPath)" `
+        -ForegroundColor White
+    if ($installInfo.ReadError) {
+        Write-Host "Main= konnte nicht gelesen werden: $($installInfo.ReadError)" `
+            -ForegroundColor Yellow
+    }
+    elseif ([string]::IsNullOrWhiteSpace($installInfo.MainPath)) {
+        Write-Host "Main= ist in local.ini nicht gesetzt." `
+            -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "ALBIS-Serverpfad (Main=): $($installInfo.MainPath)" `
+            -ForegroundColor White
+        if (-not $installInfo.MainPathValid) {
+            Write-Host "ALBIS-Serverpfad ist ungueltig oder nicht erreichbar." `
+                -ForegroundColor Yellow
+        }
+        elseif (-not $installInfo.ServerIniExists) {
+            Write-Host "albisglb.ini nicht gefunden: $($installInfo.ServerIniPath)" `
+                -ForegroundColor Yellow
+        }
+    }
+}
+Write-Status "ALBIS-Startpfade wurden angezeigt; local.ini-Inhalte werden nicht protokolliert." "INFO"
+
 $script:AISTasks = @(
     [pscustomobject]@{ Id = "system-restore"; Title = "Systemwiederherstellung" }
-    [pscustomobject]@{ Id = "registry-backup"; Title = "Registry-Sicherung" }
+    [pscustomobject]@{ Id = "registry-backup"; Title = "ALBIS-Registry-Sicherung" }
+    [pscustomobject]@{ Id = "albis-backup"; Title = "ALBIS-Dateien als ZIP sichern" }
     [pscustomobject]@{ Id = "smb"; Title = "SMB-Konfiguration und Verbindungen" }
     [pscustomobject]@{ Id = "tcp"; Title = "TCP-Konfiguration und Verbindungen" }
-    [pscustomobject]@{ Id = "windows-version"; Title = "Windows-Version pruefen" }
-    [pscustomobject]@{ Id = "memory"; Title = "Arbeitsspeicher pruefen" }
-    [pscustomobject]@{ Id = "disk-space"; Title = "Freien Speicherplatz pruefen" }
+    [pscustomobject]@{
+        Id      = "startup-checks"
+        Title   = "Automatische Startpruefungen (System und Netzwerk)"
+        TaskIds = @(
+            "windows-version"
+            "memory"
+            "disk-space"
+            "hosts-file"
+            "time-sync"
+            "defender-exclusions"
+            "ipv4-routes"
+        )
+    }
     [pscustomobject]@{ Id = "bitlocker"; Title = "BitLocker-Status und Recovery-Key anzeigen" }
-    [pscustomobject]@{ Id = "hosts-file"; Title = "Hosts-Datei pruefen" }
     [pscustomobject]@{ Id = "notepad-settings"; Title = "Notepad-Einstellungen importieren" }
-    [pscustomobject]@{ Id = "time-sync"; Title = "Datum und Uhrzeit synchronisieren" }
-    [pscustomobject]@{ Id = "defender-exclusions"; Title = "Windows-Defender-Ausnahmen pruefen" }
     [pscustomobject]@{ Id = "ipv6-qos"; Title = "IPv6 und QoS-Paketplaner pruefen/aendern" }
     [pscustomobject]@{ Id = "uac"; Title = "Benutzerkontensteuerung pruefen" }
     [pscustomobject]@{ Id = "windows-ui"; Title = "Windows-Oberflaeche optimieren" }
@@ -168,50 +319,74 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "smart-app-control"; Title = "Smart App Control pruefen" }
     [pscustomobject]@{ Id = "storage-sense"; Title = "Windows-Speicheroptimierung pruefen" }
     [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner pruefen/bereinigen" }
-    [pscustomobject]@{ Id = "ipv4-routes"; Title = "Permanente IPv4-Routen pruefen" }
     [pscustomobject]@{ Id = "event-log"; Title = "Systemereignisse pruefen" }
     [pscustomobject]@{ Id = "dns-cache"; Title = "DNS-Cache leeren" }
 )
 
+$script:AllTaskIds = @(
+    foreach ($task in $script:AISTasks) {
+        if ($task.TaskIds) {
+            $task.TaskIds
+        }
+        else {
+            $task.Id
+        }
+    }
+)
 $script:AISTaskChoices = @{}
 $script:ExitRequested = $false
+$script:StartupChecksPending = $true
 
 while ($true) {
-Write-Host ""
-Write-Host "AIS SYSTEMCHECK - AUFGABE AUSWAEHLEN" -ForegroundColor Cyan
-Write-Host "0  - Alle Aufgaben ausfuehren"
-for ($index = 0; $index -lt $script:AISTasks.Count; $index++) {
-    $choice = [string]($index + 1)
-    $script:AISTaskChoices[$choice] = $script:AISTasks[$index]
-    Write-Host ("{0,2} - {1}" -f $choice, $script:AISTasks[$index].Title)
-}
-Write-Host "Q  - Beenden"
-
-while ($true) {
-    $selection = (Read-Host "Auswahl").Trim()
-
-    if ($selection -eq "0") {
-        $script:SelectedTaskIds = @(
-            $script:AISTasks | ForEach-Object { $_.Id }
-        )
-        $script:SelectionDescription = "Alle Aufgaben"
-        break
+    if ($script:StartupChecksPending) {
+        $startupTask = $script:AISTasks |
+            Where-Object { $_.Id -eq "startup-checks" } |
+            Select-Object -First 1
+        $script:SelectedTaskIds = @($startupTask.TaskIds)
+        $script:SelectionDescription = "Automatische Startpruefungen"
+        $script:StartupChecksPending = $false
     }
+    else {
+        $script:AISTaskChoices.Clear()
+        Write-Host ""
+        Write-Host "AIS SYSTEMCHECK - AUFGABE AUSWAEHLEN" -ForegroundColor Cyan
+        Write-Host "0  - Alle Aufgaben ausfuehren"
+        for ($index = 0; $index -lt $script:AISTasks.Count; $index++) {
+            $choice = [string]($index + 1)
+            $script:AISTaskChoices[$choice] = $script:AISTasks[$index]
+            Write-Host ("{0,2} - {1}" -f $choice, $script:AISTasks[$index].Title)
+        }
+        Write-Host "Q  - Beenden"
 
-    if ($script:AISTaskChoices.ContainsKey($selection)) {
-        $selectedTask = $script:AISTaskChoices[$selection]
-        $script:SelectedTaskIds = @($selectedTask.Id)
-        $script:SelectionDescription = $selectedTask.Title
-        break
+        while ($true) {
+            $selection = (Read-Host "Auswahl").Trim()
+
+            if ($selection -eq "0") {
+                $script:SelectedTaskIds = $script:AllTaskIds
+                $script:SelectionDescription = "Alle Aufgaben"
+                break
+            }
+
+            if ($script:AISTaskChoices.ContainsKey($selection)) {
+                $selectedTask = $script:AISTaskChoices[$selection]
+                if ($selectedTask.TaskIds) {
+                    $script:SelectedTaskIds = @($selectedTask.TaskIds)
+                }
+                else {
+                    $script:SelectedTaskIds = @($selectedTask.Id)
+                }
+                $script:SelectionDescription = $selectedTask.Title
+                break
+            }
+
+            if ($selection -match "^(Q|QUIT)$") {
+                $script:ExitRequested = $true
+                break
+            }
+
+            Write-Host "Ungueltige Auswahl. Bitte eine Nummer, 0 oder Q eingeben." -ForegroundColor Yellow
+        }
     }
-
-    if ($selection -match "^(Q|QUIT)$") {
-        $script:ExitRequested = $true
-        break
-    }
-
-    Write-Host "Ungueltige Auswahl. Bitte eine Nummer, 0 oder Q eingeben." -ForegroundColor Yellow
-}
 
 if ($script:ExitRequested) {
     break
@@ -270,7 +445,7 @@ Invoke-Critical "Wiederherstellungspunkt AIS erstellen" {
 }
 
 # ============================================================
-# REGISTRY-SICHERUNG HKEY_CURRENT_USER\SOFTWARE
+# ALBIS-REGISTRY-SICHERUNG HKEY_CURRENT_USER\SOFTWARE\ALBIS
 
 if ($script:SelectedTaskIds -contains "registry-backup") {
 Write-Section "REGISTRY-SICHERUNG"
@@ -294,11 +469,11 @@ try {
     # Dateiname
     $BackupFile = Join-Path `
         $BackupFolder `
-        "Registry_HKCU_Software_$Timestamp.reg"
+        "Registry_HKCU_Software_ALBIS_$Timestamp.reg"
 
     # Registry exportieren
     $ExportResult = & reg.exe export `
-        "HKCU\Software" `
+        "HKCU\Software\ALBIS" `
         $BackupFile `
         /y 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -331,6 +506,97 @@ catch {
     Write-Status (
         "Registry-Sicherung fehlgeschlagen: $_"
     ) "ERROR"
+}
+}
+
+# ============================================================
+# ALBIS-DATEIEN ALS ZIP SICHERN
+
+if ($script:SelectedTaskIds -contains "albis-backup") {
+Write-Section "ALBIS-DATEIEN ALS ZIP SICHERN"
+
+$archivePathCreated = $false
+try {
+    $backupFolder = "C:\CGM"
+    if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
+        New-Item -Path $backupFolder -ItemType Directory -Force |
+            Out-Null
+    }
+
+    $entries = @(Get-AlbisBackupEntries -InstallInfos $script:AlbisInstallInfos)
+    if ($entries.Count -eq 0) {
+        throw "Keine vorhandenen local.ini- oder albisglb.ini-Dateien zum Sichern gefunden."
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss_fff"
+    $backupFile = Join-Path $backupFolder "ALBIS_Sicherung_$timestamp.zip"
+    $suffix = 1
+    while ($true) {
+        try {
+            $archiveStream = [System.IO.File]::Open(
+                $backupFile,
+                [System.IO.FileMode]::CreateNew,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            $archivePathCreated = $true
+            break
+        }
+        catch [System.IO.IOException] {
+            if (-not (Test-Path -LiteralPath $backupFile)) {
+                throw
+            }
+            $backupFile = Join-Path $backupFolder (
+                "ALBIS_Sicherung_{0}_{1:D2}.zip" -f $timestamp, $suffix
+            )
+            $suffix++
+        }
+    }
+
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $archive = [System.IO.Compression.ZipArchive]::new(
+            $archiveStream,
+            [System.IO.Compression.ZipArchiveMode]::Create
+        )
+        try {
+            foreach ($entry in $entries) {
+                [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                    $archive,
+                    $entry.SourcePath,
+                    $entry.EntryName
+                ) | Out-Null
+            }
+        }
+        finally {
+            $archive.Dispose()
+        }
+    }
+    finally {
+        $archiveStream.Dispose()
+    }
+
+    foreach ($installInfo in $script:AlbisInstallInfos) {
+        if (-not $installInfo.LocalIniExists) {
+            Write-Status "Nicht gesichert, local.ini fehlt: $($installInfo.LocalIniPath)" "WARN"
+        }
+        elseif (-not $installInfo.MainPathValid) {
+            Write-Status "Nur local.ini gesichert; Main=-Pfad ist leer oder ungueltig: $($installInfo.LocalIniPath)" "WARN"
+        }
+        elseif (-not $installInfo.ServerIniExists) {
+            Write-Status "Nur local.ini gesichert; albisglb.ini fehlt: $($installInfo.ServerIniPath)" "WARN"
+        }
+    }
+
+    Write-Status "ALBIS-Sicherung erstellt: $backupFile" "OK"
+    Write-Status "ZIP-Eintraege: $($entries.EntryName -join ', ')" "INFO"
+    $script:Changes++
+}
+catch {
+    if ($archivePathCreated -and (Test-Path -LiteralPath $backupFile)) {
+        Remove-Item -LiteralPath $backupFile -Force
+    }
+    Write-Status "ALBIS-Dateisicherung fehlgeschlagen: $_" "ERROR"
 }
 }
 
@@ -2475,7 +2741,7 @@ Write-Section "AUSGEWAEHLTE AUFGABE ABGESCHLOSSEN"
 
 $endTime = Get-Date
 
-if ($script:SelectedTaskIds.Count -eq $script:AISTasks.Count) {
+if ($script:SelectedTaskIds.Count -eq $script:AllTaskIds.Count) {
     Write-Status "Alle ausgewaehlten Aufgaben abgeschlossen: $script:SelectionDescription"
 }
 else {
