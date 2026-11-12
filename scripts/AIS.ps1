@@ -555,6 +555,7 @@ try {
     }
 
     try {
+        Add-Type -AssemblyName System.IO.Compression
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         $archive = [System.IO.Compression.ZipArchive]::new(
             $archiveStream,
