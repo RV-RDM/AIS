@@ -295,6 +295,7 @@ $script:AISTasks = @(
             "time-sync"
             "defender-exclusions"
             "ipv4-routes"
+            "rustdesk-check"
         )
     }
     [pscustomobject]@{ Id = "system-restore"; Title = "Systemwiederherstellung" }
@@ -318,10 +319,9 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "firewall-service"; Title = "Firewall-Dienst pruefen/neustarten" }
     [pscustomobject]@{ Id = "smart-app-control"; Title = "Smart App Control pruefen" }
     [pscustomobject]@{ Id = "storage-sense"; Title = "Windows-Speicheroptimierung pruefen" }
-    [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner pruefen/bereinigen" }
+    [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner leeren" }
     [pscustomobject]@{ Id = "event-log"; Title = "Systemereignisse pruefen" }
     [pscustomobject]@{ Id = "dns-cache"; Title = "DNS-Cache leeren" }
-    [pscustomobject]@{ Id = "rustdesk-check"; Title = "RustDesk-Installation pruefen" }
 )
 
 $script:AllTaskIds = @(
@@ -1114,12 +1114,6 @@ elseif ($rustDeskRegistryCheckFailed) {
 }
 else {
     Write-Status "RustDesk wurde nicht gefunden. Offizielle Download-Seite: $rustDeskDownloadUrl" "WARN"
-    try {
-        Start-Process -FilePath $rustDeskDownloadUrl -ErrorAction Stop
-    }
-    catch {
-        Write-Status "Offizielle Download-Seite konnte nicht geoeffnet werden: $_" "ERROR"
-    }
 }
 }
 
@@ -2527,50 +2521,11 @@ catch {
 }
 
 # ============================================================
-# TEMP ORDNER PRUEFEN 2 GB max
+# TEMP ORDNER LEEREN
 
 if ($script:SelectedTaskIds -contains "temp-folders") {
 
 Write-Section "TEMP ORDNER"
-
-function Get-FolderSizeGB {
-
-    param(
-        [string]$Path
-    )
-    if (!(Test-Path -LiteralPath $Path)) {
-
-        return 0
-    }
-    try {
-        $files = Get-ChildItem `
-            -LiteralPath $Path `
-            -Force `
-            -File `
-            -Recurse `
-            -ErrorAction SilentlyContinue
-        $size = (
-            $files |
-            Measure-Object -Property Length -Sum
-        ).Sum
-
-        if ($null -eq $size) {
-
-            $size = 0
-        }
-        return [math]::Round(
-            $size / 1GB, 2
-        )
-    }
-    catch {
-
-        Write-Status (
-            "Fehler bei Groessenermittlung $Path : $_"
-        ) "WARN"
-
-        return 0
-    }
-}
 
 function Clean-TempFolder {
 
@@ -2578,78 +2533,76 @@ function Clean-TempFolder {
         [string]$Path
     )
 
-    if (!(Test-Path -LiteralPath $Path)) {
+    if (!(Test-Path -LiteralPath $Path -PathType Container)) {
 
         Write-Status (
-            "Temp-Ordner nicht vorhanden: $Path"
+            "Temp-Ordner nicht vorhanden oder nicht zugaenglich: $Path"
         ) "WARN"
 
         return
     }
 
-    $size = Get-FolderSizeGB -Path $Path
-
-    Write-Status (
-        "$Path - Gesamtgroesse: $size GB"
-    )
-
-    if ($size -gt 2) {
-
+    try {
+        $items = @(
+            Get-ChildItem `
+                -LiteralPath $Path `
+                -Force `
+                -ErrorAction Stop
+        )
+    }
+    catch {
         Write-Status (
-            "Temp-Ordner ueberschreitet die Grenze von 2 GB"
-        ) "WARN"
+            "Temp-Ordner konnte nicht gelesen werden: $Path - $_"
+        ) "ERROR"
+        return
+    }
 
-        if (
-            Confirm-Critical (
-                "Temp-Dateien in $Path bereinigen?"
-            )
-        ) {
-
-            try {
-
-                # Nur Inhalte loeschen, nicht den Temp-Ordner selbst.
-                # Gesperrte Dateien werden uebersprungen.
-
-                Get-ChildItem `
-                    -LiteralPath $Path `
-                    -Force `
-                    -ErrorAction SilentlyContinue |
-                    Remove-Item `
-                        -Recurse `
-                        -Force `
-                        -ErrorAction SilentlyContinue
-
-                $newSize = Get-FolderSizeGB -Path $Path
-
-                Write-Status (
-                    "Bereinigung abgeschlossen. Restgroesse: $newSize GB"
-                ) "OK"
-
-                if ($newSize -gt 2) {
-
-                    Write-Status (
-                        "Temp-Ordner liegt weiterhin ueber 2 GB"
-                    ) "WARN"
-                }
-            }
-            catch {
-
-                Write-Status (
-                    "Bereinigung fehlgeschlagen: $_"
-                ) "ERROR"
-            }
+    $cleanupErrors = 0
+    foreach ($item in $items) {
+        try {
+            # Nur Inhalte loeschen, nicht den Temp-Ordner selbst.
+            Remove-Item `
+                -LiteralPath $item.FullName `
+                -Recurse `
+                -Force `
+                -ErrorAction Stop
         }
-        else {
-
+        catch {
+            $cleanupErrors++
             Write-Status (
-                "Bereinigung wurde nicht durchgefuehrt"
+                "Eintrag konnte nicht entfernt werden: $($item.FullName) - $_"
             ) "WARN"
         }
     }
-    else {
 
+    try {
+        $remaining = @(
+            Get-ChildItem `
+                -LiteralPath $Path `
+                -Force `
+                -ErrorAction Stop
+        )
+    }
+    catch {
         Write-Status (
-            "Temp-Ordner liegt innerhalb der Vorgabe"
+            "Verbleibende Inhalte konnten nicht geprueft werden: $Path - $_"
+        ) "ERROR"
+        return
+    }
+
+    if ($remaining.Count -gt 0) {
+        Write-Status (
+            "Bereinigung unvollstaendig: $($remaining.Count) Eintraege verbleiben in $Path"
+        ) "WARN"
+    }
+    elseif ($cleanupErrors -gt 0) {
+        Write-Status (
+            "Beim Bereinigen traten $cleanupErrors Fehler auf; aktuell sind keine Eintraege sichtbar: $Path"
+        ) "WARN"
+    }
+    else {
+        Write-Status (
+            "Temp-Ordner geleert: $Path"
         ) "OK"
     }
 }
