@@ -363,7 +363,6 @@ function Invoke-AutomaticWindowsUpdate {
         Write-Status "Kein Neustart erforderlich." "OK"
     }
 }
-Invoke-AutomaticWindowsUpdate
 
 function Confirm-Critical {
     param([string]$Message)
@@ -585,6 +584,7 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner leeren" }
     [pscustomobject]@{ Id = "event-log"; Title = "Systemereignisse pruefen" }
     [pscustomobject]@{ Id = "dns-cache"; Title = "DNS-Cache leeren" }
+    [pscustomobject]@{ Id = "windows-updates"; Title = "Windows-Updates installieren (Sicherheits- und Qualitaetsupdates)" }
 )
 
 $script:AllTaskIds = @(
@@ -3118,6 +3118,18 @@ catch {
         "DNS-Cache konnte nicht geleert werden: $_"
     ) "ERROR"
 }
+}
+
+# ============================================================
+# WINDOWS UPDATE
+
+if ($script:SelectedTaskIds -contains "windows-updates") {
+    if (Confirm-Critical "Passende Windows-Sicherheits- und Qualitaetsupdates suchen, herunterladen und installieren? Treiber-, Vorschau- und Funktionsupdates sind ausgeschlossen. Ein Neustart erfolgt nicht automatisch.") {
+        Invoke-AutomaticWindowsUpdate
+    }
+    else {
+        Write-Status "Windows-Update-Installation abgelehnt oder nicht bestaetigt." "WARN"
+    }
 }
 
 # ============================================================
