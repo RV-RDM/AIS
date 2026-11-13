@@ -18,15 +18,29 @@ $ProgressPreference = "SilentlyContinue"
 $LogFolder = "C:\EDV-inst\AIS"
 
 # Ordner automatisch erstellen
-try {
-    if (-not (Test-Path -LiteralPath $LogFolder -PathType Container -ErrorAction Stop)) {
-        New-Item -LiteralPath $LogFolder -ItemType Directory -Force -ErrorAction Stop |
-            Out-Null
+function Ensure-LogFolder {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    try {
+        if (-not (Test-Path -LiteralPath $Path -PathType Container -ErrorAction Stop)) {
+            New-Item -Path $Path -ItemType Directory -Force -ErrorAction Stop |
+                Out-Null
+        }
+
+        if (-not (Test-Path -LiteralPath $Path -PathType Container -ErrorAction Stop)) {
+            throw "Das Verzeichnis ist nach dem Erstellen weiterhin nicht vorhanden."
+        }
+    }
+    catch {
+        throw "Protokollverzeichnis '$Path' konnte nicht erstellt werden. " +
+            "Prüfen Sie den Schreibzugriff auf das übergeordnete Verzeichnis. " +
+            "Ursache: $($_.Exception.Message)"
     }
 }
-catch {
-    throw "Protokollverzeichnis '$LogFolder' konnte nicht erstellt werden: $($_.Exception.Message)"
-}
+Ensure-LogFolder -Path $LogFolder
 # Protokolldatei mit Zeitstempel
 $script:LogFile = Join-Path $LogFolder (
     "ALBIS_Systemcheck_{0}.txt" -f
