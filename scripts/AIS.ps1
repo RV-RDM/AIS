@@ -1615,16 +1615,6 @@ if (Test-Path $hostsFile) {
 else {
     Write-Status "Hosts-Datei nicht gefunden" "ERROR"
 }
-# Pause und auf beliebige Taste warten
-Write-Host ""
-if ([Environment]::UserInteractive -and $Host -and $Host.UI -and $Host.UI.RawUI) {
-    Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    Write-Host ""
-}
-else {
-    Write-Status "Pause uebersprungen: Nicht-interaktive Umgebung" "WARN"
-}
 }
 
 # ============================================================
@@ -3031,6 +3021,16 @@ catch {
     Write-Status (
         "Permanente IPv4-Routen konnten nicht gelesen werden: $_"
     ) "ERROR"
+}
+# Pause und auf beliebige Taste warten
+Write-Host ""
+if ([Environment]::UserInteractive -and $Host -and $Host.UI -and $Host.UI.RawUI) {
+    Write-Host "Druecken Sie eine beliebige Taste, um fortzufahren..." -ForegroundColor Cyan
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Write-Host ""
+}
+else {
+    Write-Status "Pause uebersprungen: Nicht-interaktive Umgebung" "WARN"
 }
 }
 
