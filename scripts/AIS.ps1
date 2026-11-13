@@ -735,7 +735,7 @@ Write-Section "REGISTRY-SICHERUNG"
 
 try {
     # Sicherungsverzeichnis
-    $BackupFolder = "C:\CGM"
+    $BackupFolder = $LogFolder
 
     if (!(Test-Path -LiteralPath $BackupFolder)) {
 
