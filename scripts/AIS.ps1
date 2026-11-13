@@ -621,6 +621,10 @@ $script:ExitRequested = $false
 $script:StartupChecksPending = $true
 
 while ($true) {
+    # ============================================================
+    # AUFGABE [startup-checks]: Automatische Startpruefungen
+    # Waehlt beim ersten Durchlauf die enthaltenen System- und Netzwerkchecks aus.
+    # ============================================================
     if ($script:StartupChecksPending) {
         $startupTask = $script:AISTasks |
             Where-Object { $_.Id -eq "startup-checks" } |
@@ -689,7 +693,7 @@ Write-Status "Protokoll: $script:LogFile"
 #-------------------------------------------------------------
 
 # ============================================================
-# SYSTEMWIEDERHERSTELLUNG auf 9% und einen WP erstellen
+# AUFGABE [system-restore]: Systemwiederherstellung auf 9% und einen WP erstellen
 
 if ($script:SelectedTaskIds -contains "system-restore") {
 Write-Section "SYSTEMWIEDERHERSTELLUNG"
@@ -728,7 +732,7 @@ Invoke-Critical "Wiederherstellungspunkt AIS erstellen" {
 }
 
 # ============================================================
-# ALBIS-REGISTRY-SICHERUNG HKEY_CURRENT_USER\SOFTWARE\ALBIS
+# AUFGABE [registry-backup]: ALBIS-Registry-Sicherung HKEY_CURRENT_USER\SOFTWARE\ALBIS
 
 if ($script:SelectedTaskIds -contains "registry-backup") {
 Write-Section "REGISTRY-SICHERUNG"
@@ -793,7 +797,7 @@ catch {
 }
 
 # ============================================================
-# ALBIS-DATEIEN ALS ZIP SICHERN
+# AUFGABE [albis-backup]: ALBIS-Dateien als ZIP sichern
 
 if ($script:SelectedTaskIds -contains "albis-backup") {
 Write-Section "ALBIS-DATEIEN ALS ZIP SICHERN"
@@ -885,7 +889,7 @@ catch {
 }
 
 # ============================================================
-# SMB KONFIGURATION pruefen
+# AUFGABE [smb]: SMB-Konfiguration, Verbindungen und Freigaben pruefen
 
 if ($script:SelectedTaskIds -contains "smb") {
 
@@ -1082,7 +1086,7 @@ catch {
 }
 
 # ============================================================
-# TCP KONFIGURATION pruefen
+# AUFGABE [tcp]: TCP-Konfiguration und Verbindungen pruefen
 
 if ($script:SelectedTaskIds -contains "tcp") {
 Write-Section "TCP KONFIGURATION"
@@ -1308,7 +1312,7 @@ else {
 }
 
 # ============================================================
-# WINDOWS VERSION PRUEFEN
+# AUFGABE [windows-version]: Windows-Version pruefen
 
 if ($script:SelectedTaskIds -contains "windows-version") {
 Write-Section "WINDOWS VERSION"
@@ -1342,7 +1346,7 @@ else {
 }
 
 # ============================================================
-# RUSTDESK INSTALLATION pruefen
+# AUFGABE [rustdesk-check]: RustDesk-Installation pruefen
 
 if ($script:SelectedTaskIds -contains "rustdesk-check") {
 Write-Section "RUSTDESK INSTALLATION"
@@ -1401,7 +1405,7 @@ else {
 }
 
 # ============================================================
-# ARBEITSSPEICHER MIN 16 GB und Auslastung MAX 75%
+# AUFGABE [memory]: Arbeitsspeicher und Auslastung pruefen
 
 if ($script:SelectedTaskIds -contains "memory") {
 Write-Section "ARBEITSSPEICHER"
@@ -1438,7 +1442,7 @@ else {
 }
 
 # ============================================================
-# FREIER HDD-SPEICHERPLATZ MIND 10 GB pruefen
+# AUFGABE [disk-space]: Freien HDD-Speicherplatz pruefen
 
 if ($script:SelectedTaskIds -contains "disk-space") {
 
@@ -1474,7 +1478,7 @@ foreach ($disk in $disks) {
 }
 
 # ============================================================
-# BITLOCKER-STATUS UND RECOVERY-KEY
+# AUFGABE [bitlocker]: BitLocker-Status und Recovery-Key
 
 if ($script:SelectedTaskIds -contains "bitlocker") {
 
@@ -1577,7 +1581,7 @@ else {
 }
 
 # ============================================================
-# HOSTS DATEI pruefen auf manuelle Werte
+# AUFGABE [hosts-file]: Hosts-Datei auf manuelle Werte pruefen
 
 if ($script:SelectedTaskIds -contains "hosts-file") {
 Write-Section "HOSTS DATEI"
@@ -1637,8 +1641,7 @@ else {
 }
 
 # ============================================================
-# Win11-EDITOR DATENSCHUTZ UND BENUTZBARKEIT
-# Microsoft Notepad - Settings import to PC
+# AUFGABE [notepad-settings]: Notepad-Einstellungen importieren
 
 if ($script:SelectedTaskIds -contains "notepad-settings") {
 $Url = "https://www.rdm-systems.de/ais/editor/settings.dat"
@@ -1694,7 +1697,7 @@ else {
 
 
 # ============================================================
-# DATUM UND UHRZEIT / NTP sync
+# AUFGABE [time-sync]: Datum, Uhrzeit und NTP-Synchronisierung
 
 if ($script:SelectedTaskIds -contains "time-sync") {
 $NtpServer = "ptbtime1.ptb.de"
@@ -1768,7 +1771,7 @@ catch {
 }
 
 # ============================================================
-# WINDOWS DEFENDER AUSNAHMEN nur PRUEFEN
+# AUFGABE [defender-exclusions]: Windows-Defender-Ausnahmen pruefen
 
 if ($script:SelectedTaskIds -contains "defender-exclusions") {
 
@@ -1818,7 +1821,7 @@ foreach ($exe in $required) {
 }
 
 # ============================================================
-# IPv6 und QoS-Paketplaner ausschalten (beta)
+# AUFGABE [ipv6-qos]: IPv6 und QoS-Paketplaner pruefen/ausschalten
 
 if ($script:SelectedTaskIds -contains "ipv6-qos") {
 $Components = @(
@@ -1896,6 +1899,9 @@ foreach ($Component in $Components) {
 Write-Host "Pruefung abgeschlossen." -ForegroundColor Cyan
 }
 
+# ============================================================
+# AUFGABE [uac]: Benutzerkontensteuerung pruefen
+
 if ($script:SelectedTaskIds -contains "uac") {
 Write-Section "BENUTZERKONTENSTEUERUNG"
 
@@ -1940,7 +1946,7 @@ catch {
 }
 }
 # ============================================================
-# Animationen, Transparenz, Bildlaufleisten
+# AUFGABE [windows-ui]: Animationen, Transparenz und Bildlaufleisten
 
 if ($script:SelectedTaskIds -contains "windows-ui") {
 Write-Section "WINDOWS OBERFLAECHE"
@@ -2000,7 +2006,7 @@ Invoke-Critical "Animationen, Transparenz und Bildlaufleisten optimieren" {
 }
 
 # ============================================================
-# DIENST UEBERWACHUNG VERTEILTER VERKNUEPFUNGEN deaktivieren
+# AUFGABE [distributed-links]: Dienst fuer verteilte Verknuepfungen deaktivieren
 
 if ($script:SelectedTaskIds -contains "distributed-links") {
 Write-Section "DIENST VERTEILTE VERKNUEPFUNGEN"
@@ -2053,7 +2059,7 @@ else {
 }
 
 # ============================================================
-# ENERGIEVERWALTUNG aus und BILDSCHIRMSCHONER auf 10 Minuten
+# AUFGABE [power]: Energieverwaltung und Bildschirmschoner konfigurieren
 
 if ($script:SelectedTaskIds -contains "power") {
 Write-Section "ENERGIEVERWALTUNG"
@@ -2241,7 +2247,7 @@ catch {
 }
 
 # ============================================================
-# RDP AKTIVIEREN
+# AUFGABE [rdp]: Remotedesktop aktivieren
 
 if ($script:SelectedTaskIds -contains "rdp") {
 Write-Section "REMOTEDESKTOP"
@@ -2289,7 +2295,7 @@ Invoke-Critical "Windows-Remotedesktop aktivieren" {
 }
 
 # ============================================================
-# ENABLE LINKED CONNECTIONS
+# AUFGABE [linked-connections]: Linked Connections aktivieren
 
 if ($script:SelectedTaskIds -contains "linked-connections") {
 Write-Section "ENABLE LINKED CONNECTIONS"
@@ -2340,7 +2346,7 @@ catch {
 }
 
 # ============================================================
-# CGM Ordner BERECHTIGUNGEN pruefen und setzen JEDER
+# AUFGABE [cgm-permissions]: CGM-Ordnerberechtigungen pruefen und setzen
 
 if ($script:SelectedTaskIds -contains "cgm-permissions") {
 Write-Section "CGM BERECHTIGUNGEN"
@@ -2414,7 +2420,7 @@ else {
 }
 
 # ============================================================
-# MTU 1300 pruefen und fragen
+# AUFGABE [mtu]: MTU pruefen und anpassen
 
 if ($script:SelectedTaskIds -contains "mtu") {
 Write-Section "MTU NETZWERK"
@@ -2514,8 +2520,7 @@ catch {
 }
 
 # ============================================================
-# NETZWERKPROFIL auf PRIVAT setzen
-# was passiert wenn Domain?
+# AUFGABE [network-profile]: Netzwerkprofil auf Privat setzen
 
 if ($script:SelectedTaskIds -contains "network-profile") {
 
@@ -2573,8 +2578,7 @@ catch {
 }
 
 # ============================================================
-# DEFENDER FIREWALL - PRIVATES PROFIL setzen
-# was passiert bei Domain?
+# AUFGABE [firewall-profile]: Privates Defender-Firewallprofil setzen
 
 if ($script:SelectedTaskIds -contains "firewall-profile") {
 Write-Section "WINDOWS DEFENDER FIREWALL"
@@ -2622,7 +2626,7 @@ catch {
 }
 
 # ============================================================
-# FIREWALL-DIENST Restart, Aenderungen aktivieren/uebernehmen
+# AUFGABE [firewall-service]: Firewall-Dienst kontrolliert neu starten
 
 if ($script:SelectedTaskIds -contains "firewall-service") {
 Write-Section "FIREWALL DIENST"
@@ -2667,7 +2671,7 @@ catch {
 }
 
 # ============================================================
-# WINDOWS SMART APP CONTROL aus
+# AUFGABE [smart-app-control]: Windows Smart App Control pruefen
 
 if ($script:SelectedTaskIds -contains "smart-app-control") {
 Write-Section "WINDOWS SMART APP CONTROL"
@@ -2710,7 +2714,7 @@ catch {
 
 
 # ============================================================
-# WINDOWS SPEICHEROPTIMIERUNG daily
+# AUFGABE [storage-sense]: Windows-Speicheroptimierung konfigurieren
 
 if ($script:SelectedTaskIds -contains "storage-sense") {
 Write-Section "WINDOWS SPEICHEROPTIMIERUNG"
@@ -2794,7 +2798,7 @@ catch {
 }
 
 # ============================================================
-# TEMP ORDNER LEEREN
+# AUFGABE [temp-folders]: Temp-Ordner leeren
 
 if ($script:SelectedTaskIds -contains "temp-folders") {
 
@@ -2984,7 +2988,7 @@ foreach ($tempFolderPath in $tempFolderPaths) {
 }
 
 # ============================================================
-# IPV4 ROUTEN PRUEFEN ob existent
+# AUFGABE [ipv4-routes]: IPv4-Routen pruefen
 
 if ($script:SelectedTaskIds -contains "ipv4-routes") {
 $RequiredRoutes = @(
@@ -3054,7 +3058,7 @@ else {
 }
 
 # ============================================================
-# EVENT CHECK (IDs 50, 51, 55, 7, 11; Critical/Error/Warning; last 10 days)
+# AUFGABE [event-log]: Systemereignisse der letzten zehn Tage pruefen
 
 if ($script:SelectedTaskIds -contains "event-log") {
 Write-Section "EREIGNISANZEIGE (IDs 50, 51, 55, 7, 11; Kritisch, Fehler, Warnung)"
@@ -3107,7 +3111,7 @@ else {
 }
 
 # ============================================================
-# DNS CACHE LEEREN
+# AUFGABE [dns-cache]: DNS-Cache leeren
 
 if ($script:SelectedTaskIds -contains "dns-cache") {
 
@@ -3140,7 +3144,7 @@ catch {
 }
 
 # ============================================================
-# WINDOWS UPDATE
+# AUFGABE [windows-updates]: Sicherheits- und Qualitaetsupdates installieren
 
 if ($script:SelectedTaskIds -contains "windows-updates") {
     if (Confirm-Critical "Passende Windows-Sicherheits- und Qualitaetsupdates suchen, herunterladen und installieren? Treiber-, Vorschau- und Funktionsupdates sind ausgeschlossen. Ein Neustart erfolgt nicht automatisch.") {
