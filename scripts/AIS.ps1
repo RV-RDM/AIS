@@ -15,12 +15,17 @@ $ProgressPreference = "SilentlyContinue"
 # KONFIGURATION
 # ============================================================
 # Protokollverzeichnis
-$LogFolder = "C:\cgm"
+$LogFolder = "C:\EDV-inst\AIS"
 
 # Ordner automatisch erstellen
-if (!(Test-Path -LiteralPath $LogFolder)) {
-    New-Item -Path $LogFolder -ItemType Directory -Force |
-        Out-Null
+try {
+    if (-not (Test-Path -LiteralPath $LogFolder -PathType Container -ErrorAction Stop)) {
+        New-Item -LiteralPath $LogFolder -ItemType Directory -Force -ErrorAction Stop |
+            Out-Null
+    }
+}
+catch {
+    throw "Protokollverzeichnis '$LogFolder' konnte nicht erstellt werden: $($_.Exception.Message)"
 }
 # Protokolldatei mit Zeitstempel
 $script:LogFile = Join-Path $LogFolder (
