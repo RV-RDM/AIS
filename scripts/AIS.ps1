@@ -1348,10 +1348,87 @@ else {
 # ============================================================
 # AUFGABE [rustdesk-check]: RustDesk-Installation pruefen
 
+function Get-RustDeskWindowsX64Asset {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Release
+    )
+
+    $tag = [string]$Release.tag_name
+    if ($tag -notmatch '^v?(?<version>\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?)$') {
+        throw "Die RustDesk-Version im Release ist ungueltig."
+    }
+
+    $version = $Matches.version
+    $assetName = "rustdesk-$version-x86_64.exe"
+    $asset = @($Release.assets) |
+        Where-Object { $_.name -ceq $assetName } |
+        Select-Object -First 1
+    if (-not $asset) {
+        throw "Das offizielle Windows-x64-EXE-Asset fehlt im Release."
+    }
+
+    $assetUri = $null
+    if (-not [Uri]::TryCreate(
+        [string]$asset.browser_download_url,
+        [UriKind]::Absolute,
+        [ref]$assetUri
+    )) {
+        throw "Die Asset-URL ist ungueltig."
+    }
+
+    $expectedPath = "/rustdesk/rustdesk/releases/download/$tag/$assetName"
+    if (
+        $assetUri.Scheme -cne "https" -or
+        $assetUri.Host -cne "github.com" -or
+        $assetUri.AbsolutePath -cne $expectedPath
+    ) {
+        throw "Das Asset verweist nicht auf den offiziellen RustDesk-GitHub-Release."
+    }
+
+    [pscustomobject]@{
+        Version = $version
+        Name = $assetName
+        Url = $assetUri.AbsoluteUri
+    }
+}
+
+function Get-RustDeskDesktopPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DesktopPath,
+        [Parameter(Mandatory = $true)]
+        [string]$Version,
+        [scriptblock]$PathExists = {
+            param($Path)
+            Test-Path -LiteralPath $Path
+        }
+    )
+
+    if ($Version -notmatch '^\d+(?:\.\d+){1,3}(?:[-+][A-Za-z0-9.-]+)?$') {
+        throw "Die RustDesk-Version kann nicht als Dateiname verwendet werden."
+    }
+
+    $baseName = "RustDesk-$Version-x86_64"
+    for ($suffix = 0; ; $suffix++) {
+        if ($suffix -eq 0) {
+            $fileName = "$baseName.exe"
+        }
+        else {
+            $fileName = "$baseName-$suffix.exe"
+        }
+
+        $candidate = Join-Path $DesktopPath $fileName
+        if (-not (& $PathExists $candidate)) {
+            return $candidate
+        }
+    }
+}
+
 if ($script:SelectedTaskIds -contains "rustdesk-check") {
 Write-Section "RUSTDESK INSTALLATION"
 
-$rustDeskDownloadUrl = "https://rustdesk.com/download/"
+$rustDeskReleaseApiUrl = "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
 $rustDeskExePaths = @(
     Join-Path ([Environment]::GetFolderPath("ProgramFiles")) "RustDesk\RustDesk.exe"
     Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "RustDesk\RustDesk.exe"
@@ -1400,7 +1477,98 @@ elseif ($rustDeskRegistryCheckFailed) {
     Write-Status "RustDesk-Installation konnte nicht sicher festgestellt werden." "ERROR"
 }
 else {
-    Write-Status "RustDesk wurde nicht gefunden. Offizielle Download-Seite: $rustDeskDownloadUrl" "WARN"
+    Write-Status "RustDesk wurde nicht gefunden. Ermittle die aktuelle offizielle Windows-x64-EXE." "WARN"
+
+    $rustDeskApiTempFile = $null
+    $rustDeskDownloadTempFile = $null
+    try {
+        $rustDeskDesktopPath = [Environment]::GetFolderPath("Desktop")
+        if (
+            [string]::IsNullOrWhiteSpace($rustDeskDesktopPath) -or
+            -not (Test-Path -LiteralPath $rustDeskDesktopPath -PathType Container)
+        ) {
+            throw "Der Desktop-Ordner des aktuellen Benutzers ist nicht verfuegbar."
+        }
+
+        $rustDeskApiTempFile = [System.IO.Path]::GetTempFileName()
+        $rustDeskHttpStatus = & curl.exe `
+            --fail --location --silent --show-error `
+            --header "Accept: application/vnd.github+json" `
+            --header "X-GitHub-Api-Version: 2022-11-28" `
+            --output $rustDeskApiTempFile `
+            --write-out "%{http_code}" `
+            $rustDeskReleaseApiUrl 2>$null
+        $rustDeskApiCurlExitCode = $LASTEXITCODE
+        $rustDeskHttpStatus = [string]$rustDeskHttpStatus
+        if ($rustDeskApiCurlExitCode -ne 0 -or $rustDeskHttpStatus -ne "200") {
+            throw "Die Release-API antwortete nicht erfolgreich (curl=$rustDeskApiCurlExitCode, HTTP=$rustDeskHttpStatus)."
+        }
+
+        $rustDeskRelease = Get-Content -LiteralPath $rustDeskApiTempFile -Raw |
+            ConvertFrom-Json -ErrorAction Stop
+        $rustDeskAsset = Get-RustDeskWindowsX64Asset -Release $rustDeskRelease
+        $rustDeskDestination = Get-RustDeskDesktopPath `
+            -DesktopPath $rustDeskDesktopPath `
+            -Version $rustDeskAsset.Version
+        Write-Status "Aktuelle RustDesk-Version: $($rustDeskAsset.Version)" "INFO"
+        Write-Status "Download-Ziel: $rustDeskDestination" "INFO"
+
+        $rustDeskDownloadTempFile = Join-Path $rustDeskDesktopPath (
+            ".rustdesk-download-{0}.tmp" -f [Guid]::NewGuid().ToString("N")
+        )
+        $rustDeskTempStream = [System.IO.File]::Open(
+            $rustDeskDownloadTempFile,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None
+        )
+        $rustDeskTempStream.Dispose()
+        $rustDeskHttpStatus = & curl.exe `
+            --fail --location --silent --show-error `
+            --output $rustDeskDownloadTempFile `
+            --write-out "%{http_code}" `
+            $rustDeskAsset.Url 2>$null
+        $rustDeskDownloadCurlExitCode = $LASTEXITCODE
+        $rustDeskHttpStatus = [string]$rustDeskHttpStatus
+        if ($rustDeskDownloadCurlExitCode -ne 0 -or $rustDeskHttpStatus -ne "200") {
+            throw "Der Release-Download antwortete nicht erfolgreich (curl=$rustDeskDownloadCurlExitCode, HTTP=$rustDeskHttpStatus)."
+        }
+        if ((Get-Item -LiteralPath $rustDeskDownloadTempFile).Length -le 0) {
+            throw "Der heruntergeladene Release ist leer."
+        }
+
+        for ($attempt = 0; $attempt -lt 100; $attempt++) {
+            try {
+                [System.IO.File]::Move($rustDeskDownloadTempFile, $rustDeskDestination)
+                $rustDeskDownloadTempFile = $null
+                Write-Status "RustDesk $($rustDeskAsset.Version) wurde auf dem Desktop abgelegt: $rustDeskDestination" "OK"
+                break
+            }
+            catch [System.IO.IOException] {
+                if (-not (Test-Path -LiteralPath $rustDeskDestination)) {
+                    throw
+                }
+
+                $rustDeskDestination = Get-RustDeskDesktopPath `
+                    -DesktopPath $rustDeskDesktopPath `
+                    -Version $rustDeskAsset.Version
+                Write-Status "Zieldatei war bereits vorhanden; verwende stattdessen: $rustDeskDestination" "INFO"
+            }
+        }
+        if ($rustDeskDownloadTempFile) {
+            throw "Es konnte kein kollisionsfreier Desktop-Dateiname reserviert werden."
+        }
+    }
+    catch {
+        Write-Status "RustDesk konnte nicht auf den Desktop heruntergeladen werden: $($_.Exception.Message)" "ERROR"
+    }
+    finally {
+        foreach ($rustDeskTempFile in @($rustDeskApiTempFile, $rustDeskDownloadTempFile)) {
+            if ($rustDeskTempFile -and (Test-Path -LiteralPath $rustDeskTempFile)) {
+                Remove-Item -LiteralPath $rustDeskTempFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
 }
 
