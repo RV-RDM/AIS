@@ -576,8 +576,11 @@ $script:AISTasks = @(
             "time-sync"
             "defender-exclusions"
             "ipv4-routes"
-            "rustdesk-check"
         )
+    }
+    [pscustomobject]@{
+        Id = "rustdesk-check-download"
+        Title = "RustDesk pruefen und bei Bedarf herunterladen"
     }
     [pscustomobject]@{ Id = "system-restore"; Title = "Systemwiederherstellung" }
     [pscustomobject]@{ Id = "registry-backup"; Title = "ALBIS-Registry-Sicherung" }
@@ -1346,7 +1349,7 @@ else {
 }
 
 # ============================================================
-# AUFGABE [rustdesk-check]: RustDesk-Installation pruefen
+# AUFGABE [rustdesk-check-download]: RustDesk pruefen und bei Bedarf herunterladen
 
 function Get-RustDeskWindowsX64Asset {
     param(
@@ -1438,7 +1441,7 @@ function Test-RustDeskDesktopItem {
     return [bool]$item
 }
 
-if ($script:SelectedTaskIds -contains "rustdesk-check") {
+if ($script:SelectedTaskIds -contains "rustdesk-check-download") {
 Write-Section "RUSTDESK INSTALLATION"
 
 $rustDeskReleaseApiUrl = "https://api.github.com/repos/rustdesk/rustdesk/releases/latest"
