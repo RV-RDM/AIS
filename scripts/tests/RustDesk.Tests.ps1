@@ -12,6 +12,33 @@ if ($parseErrors.Count -gt 0) {
     throw "AIS.ps1 contains PowerShell syntax errors: $($parseErrors -join '; ')"
 }
 
+$taskListAssignment = $scriptAst.FindAll(
+    {
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $node.Left.VariablePath.UserPath -eq "script:AISTasks"
+    },
+    $true
+) | Select-Object -First 1
+if (-not $taskListAssignment) {
+    throw "Could not load the AIS task list."
+}
+$tasks = @(Invoke-Expression $taskListAssignment.Right.Extent.Text)
+$startupTask = $tasks | Where-Object { $_.Id -eq "startup-checks" } |
+    Select-Object -First 1
+$rustDeskTask = $tasks | Where-Object { $_.Id -eq "rustdesk-check-download" } |
+    Select-Object -First 1
+if (-not $startupTask -or -not $rustDeskTask -or $rustDeskTask.TaskIds) {
+    throw "RustDesk check and download must be a standalone selectable task."
+}
+if ($startupTask.TaskIds -contains $rustDeskTask.Id) {
+    throw "RustDesk check and download must not run with the automatic startup checks."
+}
+if ($rustDeskTask.Title -ne "RustDesk pruefen und bei Bedarf herunterladen") {
+    throw "The RustDesk menu item must describe both checking and downloading."
+}
+
 $helperNames = @(
     "Get-RustDeskWindowsX64Asset"
     "Get-RustDeskDesktopPath"
