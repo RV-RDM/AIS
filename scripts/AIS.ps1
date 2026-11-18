@@ -629,8 +629,11 @@ while ($true) {
         $startupTask = $script:AISTasks |
             Where-Object { $_.Id -eq "startup-checks" } |
             Select-Object -First 1
-        $script:SelectedTaskIds = @($startupTask.TaskIds)
-        $script:SelectionDescription = "Automatische Startpruefungen"
+        $script:SelectedTaskIds = @($startupTask.TaskIds) + @(
+            "registry-backup"
+            "albis-backup"
+        )
+        $script:SelectionDescription = "Automatische Startpruefungen und ALBIS-Sicherungen"
         $script:StartupChecksPending = $false
     }
     else {
@@ -756,7 +759,7 @@ try {
     # Dateiname
     $BackupFile = Join-Path `
         $BackupFolder `
-        "Registry_HKCU_Software_ALBIS_$Timestamp.reg"
+        ("Registry_HKCU_Software_ALBIS_{0}_{1}.reg" -f $env:USERNAME, $Timestamp)
 
     # Registry exportieren
     $ExportResult = & reg.exe export `
@@ -804,7 +807,7 @@ Write-Section "ALBIS-DATEIEN ALS ZIP SICHERN"
 
 $archivePathCreated = $false
 try {
-    $backupFolder = "C:\CGM"
+    $backupFolder = $LogFolder
     if (-not (Test-Path -LiteralPath $backupFolder -PathType Container)) {
         New-Item -Path $backupFolder -ItemType Directory -Force |
             Out-Null
