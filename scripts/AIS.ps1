@@ -1425,6 +1425,19 @@ function Get-RustDeskDesktopPath {
     }
 }
 
+function Test-RustDeskDesktopItem {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$DesktopPath
+    )
+
+    $item = Get-ChildItem -LiteralPath $DesktopPath -File -Force -ErrorAction Stop |
+        Where-Object { $_.Name -match '(?i)^rustdesk.*\.(?:lnk|exe)$' } |
+        Select-Object -First 1
+
+    return [bool]$item
+}
+
 if ($script:SelectedTaskIds -contains "rustdesk-check") {
 Write-Section "RUSTDESK INSTALLATION"
 
@@ -1467,14 +1480,39 @@ $rustDeskEntry = $rustDeskRegistryEntries |
     Where-Object { $_.DisplayName -match '^RustDesk(?:\s|$)' } |
     Select-Object -First 1
 
+$rustDeskDesktopHasItem = $false
+$rustDeskDesktopCheckFailed = $false
+if (-not $rustDeskExe -and -not $rustDeskEntry -and -not $rustDeskRegistryCheckFailed) {
+    $rustDeskDesktopPath = [Environment]::GetFolderPath("Desktop")
+    try {
+        $rustDeskDesktopHasItem = Test-RustDeskDesktopItem `
+            -DesktopPath $rustDeskDesktopPath
+    }
+    catch {
+        $rustDeskDesktopCheckFailed = $true
+        Write-Status (
+            "RustDesk-Desktop konnte nicht geprueft werden: $($_.Exception.Message)"
+        ) "ERROR"
+    }
+}
+
 if ($rustDeskExe) {
     Write-Status "RustDesk ist installiert: $rustDeskExe" "OK"
 }
 elseif ($rustDeskEntry) {
     Write-Status "RustDesk ist installiert: $($rustDeskEntry.DisplayName)" "OK"
 }
+elseif ($rustDeskDesktopHasItem) {
+    Write-Status (
+        "RustDesk-Verknuepfung oder -Programmdatei wurde auf dem Desktop gefunden; " +
+        "der Download wird uebersprungen."
+    ) "OK"
+}
 elseif ($rustDeskRegistryCheckFailed) {
     Write-Status "RustDesk-Installation konnte nicht sicher festgestellt werden." "ERROR"
+}
+elseif ($rustDeskDesktopCheckFailed) {
+    Write-Status "RustDesk-Download wird uebersprungen, da der Desktop nicht geprueft werden konnte." "ERROR"
 }
 else {
     Write-Status "RustDesk wurde nicht gefunden. Ermittle die aktuelle offizielle Windows-x64-EXE." "WARN"
@@ -1482,7 +1520,6 @@ else {
     $rustDeskApiTempFile = $null
     $rustDeskDownloadTempFile = $null
     try {
-        $rustDeskDesktopPath = [Environment]::GetFolderPath("Desktop")
         if (
             [string]::IsNullOrWhiteSpace($rustDeskDesktopPath) -or
             -not (Test-Path -LiteralPath $rustDeskDesktopPath -PathType Container)

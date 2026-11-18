@@ -12,7 +12,11 @@ if ($parseErrors.Count -gt 0) {
     throw "AIS.ps1 contains PowerShell syntax errors: $($parseErrors -join '; ')"
 }
 
-$helperNames = @("Get-RustDeskWindowsX64Asset", "Get-RustDeskDesktopPath")
+$helperNames = @(
+    "Get-RustDeskWindowsX64Asset"
+    "Get-RustDeskDesktopPath"
+    "Test-RustDeskDesktopItem"
+)
 $helperDefinitions = $scriptAst.FindAll(
     {
         param($node)
@@ -97,5 +101,44 @@ Assert-Equal `
     (Join-Path $desktopPath "RustDesk-1.4.4-x86_64-2.exe") `
     $path `
     "An existing Desktop file would be overwritten."
+
+$desktopPath = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "RustDeskTestDesktop-{0}" -f [Guid]::NewGuid().ToString("N")
+)
+New-Item -Path $desktopPath -ItemType Directory -ErrorAction Stop | Out-Null
+try {
+    Assert-Equal `
+        $false `
+        (Test-RustDeskDesktopItem -DesktopPath $desktopPath) `
+        "An empty Desktop was reported to contain RustDesk."
+
+    New-Item -Path (Join-Path $desktopPath "RustDesk.lnk") -ItemType File |
+        Out-Null
+    Assert-Equal `
+        $true `
+        (Test-RustDeskDesktopItem -DesktopPath $desktopPath) `
+        "A RustDesk shortcut was not detected."
+
+    Remove-Item -LiteralPath (Join-Path $desktopPath "RustDesk.lnk")
+    New-Item -Path (Join-Path $desktopPath "RUSTDESK-1.4.4-X86_64.EXE") `
+        -ItemType File | Out-Null
+    Assert-Equal `
+        $true `
+        (Test-RustDeskDesktopItem -DesktopPath $desktopPath) `
+        "A case-insensitive RustDesk executable was not detected."
+
+    Remove-Item -LiteralPath (
+        Join-Path $desktopPath "RUSTDESK-1.4.4-X86_64.EXE"
+    )
+    New-Item -Path (Join-Path $desktopPath "notes.txt") -ItemType File |
+        Out-Null
+    Assert-Equal `
+        $false `
+        (Test-RustDeskDesktopItem -DesktopPath $desktopPath) `
+        "An unrelated Desktop file was reported as RustDesk."
+}
+finally {
+    Remove-Item -LiteralPath $desktopPath -Recurse -Force
+}
 
 Write-Output "RustDesk helper tests passed."
