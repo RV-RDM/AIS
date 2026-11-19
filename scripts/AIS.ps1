@@ -383,42 +383,20 @@ function Invoke-AutomaticWindowsUpdate {
     }
 }
 
-function Confirm-Critical {
-    param([string]$Message)
-    Write-Host ""
-    Write-Host "KRITISCHE SYSTEMAENDERUNG" -ForegroundColor Red
-    Write-Host $Message -ForegroundColor Yellow
-
-    if (-not [Environment]::UserInteractive -or -not $Host -or -not $Host.UI -or -not $Host.UI.RawUI) {
-        Write-Status "Aenderung abgebrochen: Nicht-interaktive Umgebung" "WARN"
-        return $false
-    }
-
-    $answer = Read-Host "Aenderung ausfuehren? (J/N)"
-
-    return ($answer -match "^(J|JA|Y|YES)$")
-}
 function Invoke-Critical {
-
     param(
         [string]$Description,
         [scriptblock]$Action
     )
-    if (Confirm-Critical $Description) {
-        try {
-            & $Action
-            $script:Changes++
-            Write-Status "$Description - ausgefuehrt" "OK"
-        }
-        catch {
-            Write-Status (
-                "$Description - $($_.Exception.Message)"
-            ) "ERROR"
-        }
+    try {
+        & $Action
+        $script:Changes++
+        Write-Status "$Description - ausgefuehrt" "OK"
     }
-    else {
-
-        Write-Status "$Description - abgelehnt" "WARN"
+    catch {
+        Write-Status (
+            "$Description - $($_.Exception.Message)"
+        ) "ERROR"
     }
 }
 function Get-AlbisInstallInfo {
@@ -1867,41 +1845,36 @@ Write-Host ""
 Write-Host "Microsoft Notepad - Settings Import" -ForegroundColor Cyan
 Write-Host "-----------------------------------"
 
-if (-not (Confirm-Critical "Notepad-Einstellungen importieren?")) {
-    Write-Status "Notepad-Settings-Import abgebrochen" "WARN"
+if (Get-Process Notepad -ErrorAction SilentlyContinue) {
+    Write-Status "Notepad ist noch aktiv. Bitte vor dem Import schließen." "WARN"
 }
 else {
-    if (Get-Process Notepad -ErrorAction SilentlyContinue) {
-        Write-Status "Notepad ist noch aktiv. Bitte vor dem Import schließen." "WARN"
+    try {
+        # Download settings
+        Write-Host ""
+        Write-Host "Downloading settings ..."
+
+        Invoke-WebRequest -Uri $Url -OutFile $TempFile `
+            -UseBasicParsing -ErrorAction Stop
+
+        if (!(Test-Path $TempFile) -or
+            (Get-Item $TempFile).Length -eq 0) {
+            throw "Download failed or file is empty."
+        }
+
+        # Import settings without backup
+        Copy-Item $TempFile $Target -Force
+
+        Write-Host ""
+        Write-Host "Import completed successfully!" -ForegroundColor Green
+        Write-Host "You can now start Notepad."
     }
-    else {
-        try {
-            # Download settings
-            Write-Host ""
-            Write-Host "Downloading settings ..."
-
-            Invoke-WebRequest -Uri $Url -OutFile $TempFile `
-                -UseBasicParsing -ErrorAction Stop
-
-            if (!(Test-Path $TempFile) -or
-                (Get-Item $TempFile).Length -eq 0) {
-                throw "Download failed or file is empty."
-            }
-
-            # Import settings without backup
-            Copy-Item $TempFile $Target -Force
-
-            Write-Host ""
-            Write-Host "Import completed successfully!" -ForegroundColor Green
-            Write-Host "You can now start Notepad."
-        }
-        catch {
-            Write-Host ("Import error: " + $_.Exception.Message) -ForegroundColor Red
-            Write-Status ("Notepad-Import fehlgeschlagen: $_") "ERROR"
-        }
-        finally {
-            Remove-Item $TempFile -Force -ErrorAction SilentlyContinue
-        }
+    catch {
+        Write-Host ("Import error: " + $_.Exception.Message) -ForegroundColor Red
+        Write-Status ("Notepad-Import fehlgeschlagen: $_") "ERROR"
+    }
+    finally {
+        Remove-Item $TempFile -Force -ErrorAction SilentlyContinue
     }
 }
 }
@@ -2071,23 +2044,17 @@ foreach ($Component in $Components) {
 
             Write-Host "Status: AKTIVIERT" -ForegroundColor Green
 
-            if (Confirm-Critical "Soll $($Component.Name) auf diesem Adapter deaktiviert werden?") {
+            try {
+                Disable-NetAdapterBinding `
+                    -Name $Binding.Name `
+                    -ComponentID $Component.ComponentID `
+                    -Confirm:$false `
+                    -ErrorAction Stop
 
-                try {
-                    Disable-NetAdapterBinding `
-                        -Name $Binding.Name `
-                        -ComponentID $Component.ComponentID `
-                        -Confirm:$false `
-                        -ErrorAction Stop
-
-                    Write-Host "Erfolgreich deaktiviert." -ForegroundColor Green
-                }
-                catch {
-                    Write-Host "Fehler: $($_.Exception.Message)" -ForegroundColor Red
-                }
+                Write-Host "Erfolgreich deaktiviert." -ForegroundColor Green
             }
-            else {
-                Write-Host "Keine Aenderung vorgenommen." -ForegroundColor Gray
+            catch {
+                Write-Host "Fehler: $($_.Exception.Message)" -ForegroundColor Red
             }
         }
         else {
@@ -2129,23 +2096,16 @@ try {
 
         Write-Status "Benutzerkontensteuerung ist AKTIVIERT" "WARN"
 
-        if (Confirm-Critical "Benutzerkontensteuerung deaktivieren?") {
+        Set-ItemProperty `
+            -Path $UACPath `
+            -Name EnableLUA `
+            -Value 0 `
+            -Type DWord `
+            -ErrorAction Stop
 
-            Set-ItemProperty `
-                -Path $UACPath `
-                -Name EnableLUA `
-                -Value 0 `
-                -Type DWord `
-                -ErrorAction Stop
+        Write-Status "Benutzerkontensteuerung wurde deaktiviert" "OK"
 
-            Write-Status "Benutzerkontensteuerung wurde deaktiviert" "OK"
-
-            Write-Host "Ein Windows-Neustart ist erforderlich!" -ForegroundColor Yellow
-        }
-        else {
-
-            Write-Status "Benutzerkontensteuerung bleibt aktiviert" "WARN"
-        }
+        Write-Host "Ein Windows-Neustart ist erforderlich!" -ForegroundColor Yellow
     }
     else {
         Write-Status "Benutzerkontensteuerung ist bereits DEAKTIVIERT" "OK"
@@ -2669,46 +2629,37 @@ try {
                 Write-Host "Ziel-MTU:      $TargetMTU"
                 Write-Host ""
 
-                if (Confirm-Critical "MTU auf $TargetMTU setzen?") {
+                try {
+                    Set-NetIPInterface `
+                        -InterfaceIndex $interface.InterfaceIndex `
+                        -AddressFamily $Family `
+                        -NlMtuBytes $TargetMTU `
+                        -ErrorAction Stop
 
-                    try {
-                        Set-NetIPInterface `
+                    $NewMTU = (
+                        Get-NetIPInterface `
                             -InterfaceIndex $interface.InterfaceIndex `
-                            -AddressFamily $Family `
-                            -NlMtuBytes $TargetMTU `
-                            -ErrorAction Stop
+                            -AddressFamily $Family
+                    ).NlMtu
 
-                        $NewMTU = (
-                            Get-NetIPInterface `
-                                -InterfaceIndex $interface.InterfaceIndex `
-                                -AddressFamily $Family
-                        ).NlMtu
-
-                        if ($NewMTU -eq $TargetMTU) {
-
-                            Write-Status (
-                                "$Adapter ($Family): MTU erfolgreich auf $NewMTU gesetzt"
-                            ) "OK"
-                        }
-                        else {
-
-                            Write-Status (
-                                "$Adapter ($Family): MTU konnte nicht bestaetigt werden. Aktuell: $NewMTU"
-                            ) "WARN"
-                        }
-                    }
-                    catch {
+                    if ($NewMTU -eq $TargetMTU) {
 
                         Write-Status (
-                            "MTU-Aenderung fehlgeschlagen: $_"
-                        ) "ERROR"
+                            "$Adapter ($Family): MTU erfolgreich auf $NewMTU gesetzt"
+                        ) "OK"
+                    }
+                    else {
+
+                        Write-Status (
+                            "$Adapter ($Family): MTU konnte nicht bestaetigt werden. Aktuell: $NewMTU"
+                        ) "WARN"
                     }
                 }
-                else {
+                catch {
 
                     Write-Status (
-                        "$Adapter ($Family): MTU unveraendert"
-                    ) "WARN"
+                        "MTU-Aenderung fehlgeschlagen: $_"
+                    ) "ERROR"
                 }
             }
             else {
@@ -3358,12 +3309,7 @@ catch {
 # AUFGABE [windows-updates]: Sicherheits- und Qualitaetsupdates installieren
 
 if ($script:SelectedTaskIds -contains "windows-updates") {
-    if (Confirm-Critical "Passende Windows-Sicherheits- und Qualitaetsupdates suchen, herunterladen und installieren? Treiber-, Vorschau- und Funktionsupdates sind ausgeschlossen. Ein Neustart erfolgt nicht automatisch.") {
-        Invoke-AutomaticWindowsUpdate
-    }
-    else {
-        Write-Status "Windows-Update-Installation abgelehnt oder nicht bestaetigt." "WARN"
-    }
+    Invoke-AutomaticWindowsUpdate
 }
 
 # ============================================================
@@ -3446,9 +3392,7 @@ Write-Host "Pruefbericht gespeichert unter:" -ForegroundColor Cyan
 Write-Host $script:LogFile -ForegroundColor White
 Write-Host ""
 
-if (Confirm-Critical "Pruefbericht jetzt mit Editor oeffnen?") {
-    Start-Process notepad.exe -ArgumentList "`"$script:LogFile`""
-}
+Start-Process notepad.exe -ArgumentList "`"$script:LogFile`""
 
 Write-Host ""
 Write-Host "AIS SYSTEMCHECK abgeschlossen." -ForegroundColor Green
