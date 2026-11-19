@@ -2519,74 +2519,334 @@ catch {
 # ============================================================
 # AUFGABE [cgm-permissions]: CGM-Ordnerberechtigungen pruefen und setzen
 
-if ($script:SelectedTaskIds -contains "cgm-permissions") {
-Write-Section "CGM BERECHTIGUNGEN"
+function Confirm-CgmAlbisStopped {
+    param(
+        [scriptblock]$GetProcesses = {
+            Get-Process -ErrorAction Stop |
+                Where-Object { $_.ProcessName -in @("albis", "albiscs") }
+        },
+        [scriptblock]$Pause = {
+            Read-Host "Bitte ALBIS beenden und anschliessend die Eingabetaste druecken"
+        }
+    )
 
-$cgmPath = "C:\CGM"
+    $runningProcesses = @(& $GetProcesses)
+    if ($runningProcesses.Count -eq 0) {
+        return $true
+    }
 
-if (Test-Path -LiteralPath $cgmPath) {
+    $processNames = @(
+        $runningProcesses |
+            ForEach-Object { $_.ProcessName } |
+            Sort-Object -Unique
+    ) -join ", "
+    Write-Host (
+        "WARNUNG: $processNames laeuft noch. Bitte ALBIS beenden und " +
+        "anschliessend erneut pruefen. Unterordner werden nur bei " +
+        "geschlossenem ALBIS geloescht; Berechtigungen werden unabhaengig " +
+        "davon geprueft."
+    ) -ForegroundColor Yellow
+    $null = & $Pause
 
-    $acl = Get-Acl -LiteralPath $cgmPath
+    $runningProcesses = @(& $GetProcesses)
+    if ($runningProcesses.Count -gt 0) {
+        $processNames = @(
+            $runningProcesses |
+                ForEach-Object { $_.ProcessName } |
+                Sort-Object -Unique
+        ) -join ", "
+        Write-Host (
+            "ALBIS laeuft weiterhin: $processNames. Die Unterordner werden " +
+            "nicht geloescht; die CGM-Berechtigungen werden trotzdem geprueft."
+        ) -ForegroundColor Red
+        return $false
+    }
 
-    $hasFullControl = $false
+    return $true
+}
 
-    foreach ($rule in $acl.Access) {
+function Get-CgmLocalIniDirectory {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$LocalIniPaths
+    )
 
-        try {
+    $existingPaths = @(
+        foreach ($path in $LocalIniPaths) {
+            if (Test-Path -LiteralPath $path -PathType Leaf -ErrorAction Stop) {
+                $path
+            }
+        }
+    )
 
-            $sid = $rule.IdentityReference.Translate(
-                [System.Security.Principal.SecurityIdentifier]
-            )
+    if ($existingPaths.Count -eq 0) {
+        throw "Keine relevante local.ini gefunden; CGM-Berechtigungen und Ordnerbereinigung wurden nicht ausgefuehrt."
+    }
+    if ($existingPaths.Count -gt 1) {
+        throw (
+            "Mehrere relevante local.ini-Dateien gefunden; der Zielordner ist " +
+            "nicht eindeutig. CGM-Berechtigungen und Ordnerbereinigung wurden nicht ausgefuehrt."
+        )
+    }
 
-            if (
-                $sid.Value -eq "S-1-1-0" -and
-                $rule.AccessControlType -eq "Allow" -and
-                $rule.FileSystemRights -band
-                [System.Security.AccessControl.FileSystemRights]::FullControl
-            ) {
+    $localIniPath = [System.IO.Path]::GetFullPath($existingPaths[0])
+    $directory = [System.IO.Path]::GetDirectoryName($localIniPath)
+    if ([string]::IsNullOrWhiteSpace($directory)) {
+        throw "Der Ordner der relevanten local.ini konnte nicht bestimmt werden."
+    }
 
-                $hasFullControl = $true
+    [pscustomobject]@{
+        LocalIniPath = $localIniPath
+        Directory   = $directory
+    }
+}
+
+function Send-CgmFolderToRecycleBin {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    Add-Type -AssemblyName Microsoft.VisualBasic -ErrorAction Stop
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+        $Path,
+        [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+        [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+    )
+}
+
+function Remove-CgmTemporaryFolders {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$BaseDirectory,
+        [scriptblock]$RecycleBinAction = {
+            param($Path)
+            Send-CgmFolderToRecycleBin -Path $Path
+        }
+    )
+
+    $relativePaths = @(
+        "cefwrapper"
+        "Connect"
+        "DB\wkflwapi"
+        "Listen"
+        "wkflwapi"
+        "logs"
+    )
+    $basePath = [System.IO.Path]::GetFullPath($BaseDirectory)
+    $baseItem = Get-Item -LiteralPath $basePath -Force -ErrorAction Stop
+    if (-not $baseItem.PSIsContainer) {
+        throw "Der local.ini-Zielpfad ist kein Verzeichnis: $basePath"
+    }
+    if ($baseItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Der local.ini-Ordner ist ein Verweis; Bereinigung wurde aus Sicherheitsgruenden abgebrochen."
+    }
+
+    $trimmedBasePath = $basePath.TrimEnd([char[]]@("\", "/"))
+    if ([string]::IsNullOrEmpty($trimmedBasePath)) {
+        $trimmedBasePath = [System.IO.Path]::DirectorySeparatorChar.ToString()
+    }
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    $basePrefix = if ($trimmedBasePath.EndsWith($separator)) {
+        $trimmedBasePath
+    }
+    else {
+        $trimmedBasePath + $separator
+    }
+    $pathComparison = if ($env:OS -eq "Windows_NT") {
+        [System.StringComparison]::OrdinalIgnoreCase
+    }
+    else {
+        [System.StringComparison]::Ordinal
+    }
+
+    foreach ($relativePath in $relativePaths) {
+        $targetPath = $basePath
+        $blockedByReparsePoint = $false
+        foreach ($segment in ($relativePath -split '[\\/]')) {
+            $targetPath = Join-Path $targetPath $segment
+            if (-not $targetPath.StartsWith($basePrefix, $pathComparison)) {
+                throw "Unsicherer Bereinigungspfad ausserhalb des local.ini-Ordners: $targetPath"
+            }
+            if (-not (Test-Path -LiteralPath $targetPath -ErrorAction Stop)) {
+                break
+            }
+
+            $item = Get-Item -LiteralPath $targetPath -Force -ErrorAction Stop
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                $blockedByReparsePoint = $true
                 break
             }
         }
-        catch {
+
+        if ($blockedByReparsePoint) {
+            [pscustomobject]@{
+                Path    = $targetPath
+                Status  = "Skipped"
+                Message = "Verweis/Junction erkannt; nicht geloescht."
+            }
             continue
         }
-    }
-
-    if ($hasFullControl) {
-
-        Write-Status (
-            "Jeder besitzt bereits Vollzugriff auf C:\CGM"
-        ) "OK"
-    }
-    else {
-
-        Write-Status (
-            "Vollzugriff fuer Jeder fehlt auf C:\CGM"
-        ) "WARN"
-
-        Invoke-Critical `
-            "C:\CGM und Unterordner fuer Jeder mit Vollzugriff versehen" {
-
-            $result = & icacls.exe "C:\CGM" `
-                /grant "*S-1-1-0:(OI)(CI)F" `
-                /T /C 2>&1
-
-            foreach ($line in $result) {
-
-                Add-Content -Path $script:LogFile `
-                    -Value $line -Encoding UTF8
+        if (-not (Test-Path -LiteralPath $targetPath -PathType Container -ErrorAction Stop)) {
+            [pscustomobject]@{
+                Path    = $targetPath
+                Status  = "Missing"
+                Message = "Nicht vorhanden."
             }
-            if ($LASTEXITCODE -ne 0) {
-                throw "icacls meldet Fehler: Exitcode $LASTEXITCODE"
+            continue
+        }
+
+        try {
+            & $RecycleBinAction $targetPath
+            [pscustomobject]@{
+                Path    = $targetPath
+                Status  = "Removed"
+                Message = "In den Papierkorb verschoben."
+            }
+        }
+        catch {
+            [pscustomobject]@{
+                Path    = $targetPath
+                Status  = "Error"
+                Message = $_.Exception.Message
             }
         }
     }
 }
-else {
 
-    Write-Status "Verzeichnis C:\CGM nicht vorhanden" "ERROR"
+if ($script:SelectedTaskIds -contains "cgm-permissions") {
+Write-Section "CGM BERECHTIGUNGEN"
+
+$albisStopped = $false
+$albisProcessCheckSucceeded = $true
+try {
+    $albisStopped = Confirm-CgmAlbisStopped
+}
+catch {
+    $albisProcessCheckSucceeded = $false
+    Write-Status (
+        "ALBIS-Prozessstatus konnte nicht geprueft werden; die Unterordner " +
+        "werden zur Sicherheit nicht geloescht. Berechtigungen werden " +
+        "trotzdem geprueft. Ursache: $($_.Exception.Message)"
+    ) "ERROR"
+}
+if ($albisProcessCheckSucceeded -and -not $albisStopped) {
+    Write-Status (
+        "ALBIS laeuft weiterhin; die Unterordner werden nicht geloescht. " +
+        "Die CGM-Berechtigungen werden trotzdem geprueft und bei Bedarf gesetzt."
+    ) "WARN"
+}
+try {
+    $localIniPaths = @(
+        $script:AlbisInstallations |
+            ForEach-Object { Join-Path $_.Path "local.ini" }
+    )
+    $localIniLocation = Get-CgmLocalIniDirectory `
+        -LocalIniPaths $localIniPaths
+    Write-Status (
+        "local.ini gefunden: $($localIniLocation.LocalIniPath)"
+    ) "INFO"
+
+    if ($albisStopped) {
+        try {
+            $cleanupResults = @(
+                Remove-CgmTemporaryFolders `
+                    -BaseDirectory $localIniLocation.Directory
+            )
+            foreach ($result in $cleanupResults) {
+                switch ($result.Status) {
+                    "Removed" {
+                        Write-Status "$($result.Path): $($result.Message)" "OK"
+                    }
+                    "Missing" {
+                        Write-Status "$($result.Path): $($result.Message)" "INFO"
+                    }
+                    "Skipped" {
+                        Write-Status "$($result.Path): $($result.Message)" "WARN"
+                    }
+                    "Error" {
+                        Write-Status "$($result.Path): $($result.Message)" "ERROR"
+                    }
+                }
+            }
+        }
+        catch {
+            Write-Status (
+                "Ordnerbereinigung fehlgeschlagen: $($_.Exception.Message)"
+            ) "ERROR"
+        }
+    }
+
+    $cgmPath = "C:\CGM"
+
+    if (Test-Path -LiteralPath $cgmPath) {
+
+        $acl = Get-Acl -LiteralPath $cgmPath
+
+        $hasFullControl = $false
+
+        foreach ($rule in $acl.Access) {
+
+            try {
+
+                $sid = $rule.IdentityReference.Translate(
+                    [System.Security.Principal.SecurityIdentifier]
+                )
+
+                if (
+                    $sid.Value -eq "S-1-1-0" -and
+                    $rule.AccessControlType -eq "Allow" -and
+                    $rule.FileSystemRights -band
+                    [System.Security.AccessControl.FileSystemRights]::FullControl
+                ) {
+
+                    $hasFullControl = $true
+                    break
+                }
+            }
+            catch {
+                continue
+            }
+        }
+
+        if ($hasFullControl) {
+
+            Write-Status (
+                "Jeder besitzt bereits Vollzugriff auf C:\CGM"
+            ) "OK"
+        }
+        else {
+
+            Write-Status (
+                "Vollzugriff fuer Jeder fehlt auf C:\CGM"
+            ) "WARN"
+
+            Invoke-Critical `
+                "C:\CGM und Unterordner fuer Jeder mit Vollzugriff versehen" {
+
+                $result = & icacls.exe "C:\CGM" `
+                    /grant "*S-1-1-0:(OI)(CI)F" `
+                    /T /C 2>&1
+
+                foreach ($line in $result) {
+
+                    Add-Content -Path $script:LogFile `
+                        -Value $line -Encoding UTF8
+                }
+                if ($LASTEXITCODE -ne 0) {
+                    throw "icacls meldet Fehler: Exitcode $LASTEXITCODE"
+                }
+            }
+        }
+    }
+
+    else {
+
+        Write-Status "Verzeichnis C:\CGM nicht vorhanden" "ERROR"
+    }
+}
+catch {
+    Write-Status $_.Exception.Message "ERROR"
 }
 }
 
