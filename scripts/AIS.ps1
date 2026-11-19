@@ -574,7 +574,7 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "power"; Title = "Energieverwaltung und Bildschirmschoner" }
     [pscustomobject]@{ Id = "rdp"; Title = "Remotedesktop aktivieren" }
     [pscustomobject]@{ Id = "linked-connections"; Title = "Linked Connections aktivieren" }
-    [pscustomobject]@{ Id = "cgm-permissions"; Title = "CGM-Ordnerberechtigungen pruefen" }
+    [pscustomobject]@{ Id = "cgm-permissions"; Title = "CGM-Ordner bereinigen und Rechte setzen" }
     [pscustomobject]@{ Id = "mtu"; Title = "MTU pruefen und anpassen" }
     [pscustomobject]@{ Id = "network-profile"; Title = "Netzwerkprofil auf Privat setzen" }
     [pscustomobject]@{ Id = "firewall-profile"; Title = "Private Defender-Firewall pruefen" }
@@ -584,7 +584,7 @@ $script:AISTasks = @(
     [pscustomobject]@{ Id = "temp-folders"; Title = "Temp-Ordner leeren" }
     [pscustomobject]@{ Id = "event-log"; Title = "Systemereignisse pruefen" }
     [pscustomobject]@{ Id = "dns-cache"; Title = "DNS-Cache leeren" }
-    [pscustomobject]@{ Id = "windows-updates"; Title = "Windows-Updates installieren (Sicherheits- und Qualitaetsupdates)" }
+    [pscustomobject]@{ Id = "windows-updates"; Title = "Windows-Updates: Sicherheit & Qualit." }
 )
 
 $script:AllTaskIds = @(
